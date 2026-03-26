@@ -1,0 +1,56 @@
+// BLACKPASSWORD - REGLAS DE SEGURIDAD v8.0-ZERO-TRUST
+// Copia y pega esto en Firestore -> Rules.
+// Estas reglas asumen que el ID del documento en la colección "usuarios" es el UID del usuario.
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Colección de Usuarios y sus Sub-colecciones
+    // Un usuario solo puede leer o escribir en su propio documento.
+    match /usuarios/{userId} {
+      allow read, write: if isAuthenticated() && request.auth.uid == userId;
+
+      // El usuario solo puede acceder a sus propias sub-colecciones.
+      match /boveda/{secretId} {
+        allow read, write: if isAuthenticated() && request.auth.uid == userId;
+      }
+
+      match /archivos/{fileId} {
+        allow read, write: if isAuthenticated() && request.auth.uid == userId;
+      }
+
+      match /imagenes/{imgId} {
+        allow read, write: if isAuthenticated() && request.auth.uid == userId;
+      }
+    }
+
+    // Bitácora de Auditoría
+    // Cualquiera puede crear una entrada (para registrar intentos de login fallidos, etc.),
+    // pero solo el usuario dueño de la entrada puede leerla.
+    match /audit_logs/{logId} {
+      allow create: if isAuthenticated();
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.uid;
+      allow update, delete: if false; // Los registros son inmutables.
+    }
+
+    // Alertas de Intrusión
+    // Cualquiera puede crear una alerta (incluso anónimamente).
+    // Solo usuarios autenticados pueden leer/actualizar (para gestión de administradores).
+    match /intrusion_alerts/{alertId} {
+      allow create: if true;
+      allow read, update: if isAuthenticated();
+      allow delete: if false;
+    }
+
+    // Bloqueo Global por Defecto
+    // Niega el acceso a cualquier otra ruta que no esté explícitamente permitida.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
