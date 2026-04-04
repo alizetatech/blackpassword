@@ -1,0 +1,7 @@
+/blackpassword-core/target/
+/blackpassword-crypto/target/
+/blackpassword-services/target/
+/blackpassword-ui/target/
+blackvault_local.db
+blackvault_local.db.enc
+/target/

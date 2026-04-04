@@ -4,19 +4,45 @@
     <groupId>com.mycompany</groupId>
     <artifactId>Blackpassword</artifactId>
     <version>1.0-SNAPSHOT</version>
-    <packaging>jar</packaging>
+    <packaging>pom</packaging>
     
+    <modules>
+        <module>blackpassword-core</module>
+        <module>blackpassword-crypto</module>
+        <module>blackpassword-services</module>
+        <module>blackpassword-ui</module>
+    </modules>
+
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.release>25</maven.compiler.release>
-        <exec.mainClass>com.mycompany.blackpassword.Blackpassword</exec.mainClass>
+        <maven.compiler.release>17</maven.compiler.release>
         <firebase.version>9.8.0</firebase.version>
         <google.cloud.bom.version>26.78.0</google.cloud.bom.version>
+        <grpc.version>1.76.3</grpc.version>
         <bouncycastle.version>1.80</bouncycastle.version>
+        <zxing.version>3.5.3</zxing.version>
     </properties>
 
     <dependencyManagement>
         <dependencies>
+            <!-- Modulos internos -->
+            <dependency>
+                <groupId>com.mycompany</groupId>
+                <artifactId>blackpassword-crypto</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.mycompany</groupId>
+                <artifactId>blackpassword-services</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.mycompany</groupId>
+                <artifactId>blackpassword-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <!-- Externas -->
             <dependency>
                 <groupId>com.google.cloud</groupId>
                 <artifactId>libraries-bom</artifactId>
@@ -24,109 +50,93 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
+            <dependency>
+                <groupId>io.grpc</groupId>
+                <artifactId>grpc-bom</artifactId>
+                <version>${grpc.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.google.firebase</groupId>
+                <artifactId>firebase-admin</artifactId>
+                <version>${firebase.version}</version>
+                <exclusions>
+                    <exclusion>
+                        <groupId>io.netty</groupId>
+                        <artifactId>*</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
+            <dependency>
+                <groupId>com.google.code.gson</groupId>
+                <artifactId>gson</artifactId>
+                <version>2.10.1</version>
+            </dependency>
+            <dependency>
+                <groupId>com.squareup.okhttp3</groupId>
+                <artifactId>okhttp</artifactId>
+                <version>4.12.0</version>
+            </dependency>
+            <dependency>
+                <groupId>io.grpc</groupId>
+                <artifactId>grpc-okhttp</artifactId>
+                <version>${grpc.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.formdev</groupId>
+                <artifactId>flatlaf</artifactId>
+                <version>3.6.2</version>
+            </dependency>
+            <dependency>
+                <groupId>com.formdev</groupId>
+                <artifactId>flatlaf-extras</artifactId>
+                <version>3.5.4</version>
+            </dependency>
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-simple</artifactId>
+                <version>2.0.16</version>
+            </dependency>
+            <dependency>
+                <groupId>org.bouncycastle</groupId>
+                <artifactId>bcprov-jdk18on</artifactId>
+                <version>${bouncycastle.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.bouncycastle</groupId>
+                <artifactId>bcpkix-jdk18on</artifactId>
+                <version>${bouncycastle.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.bouncycastle</groupId>
+                <artifactId>bcpg-jdk18on</artifactId>
+                <version>${bouncycastle.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.bouncycastle</groupId>
+                <artifactId>bcutil-jdk18on</artifactId>
+                <version>${bouncycastle.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.google.zxing</groupId>
+                <artifactId>core</artifactId>
+                <version>${zxing.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.google.zxing</groupId>
+                <artifactId>javase</artifactId>
+                <version>${zxing.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
-    <dependencies>
-        <dependency>
-            <groupId>com.google.firebase</groupId>
-            <artifactId>firebase-admin</artifactId>
-            <version>${firebase.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>com.formdev</groupId>
-            <artifactId>flatlaf</artifactId>
-            <version>3.6.2</version>
-        </dependency>
-        <dependency>
-            <groupId>com.formdev</groupId>
-            <artifactId>flatlaf-extras</artifactId>
-            <version>3.5.4</version>
-        </dependency>
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-simple</artifactId>
-            <version>2.0.16</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.pdfbox</groupId>
-            <artifactId>pdfbox</artifactId>
-            <version>2.0.32</version>
-        </dependency>
-        <dependency>
-            <groupId>org.xerial</groupId>
-            <artifactId>sqlite-jdbc</artifactId>
-            <version>3.48.0.0</version>
-        </dependency>
-        <dependency>
-            <groupId>com.google.code.gson</groupId>
-            <artifactId>gson</artifactId>
-            <version>2.10.1</version>
-        </dependency>
-        
-        <!-- OkHttp para comunicación con el servidor -->
-        <dependency>
-            <groupId>com.squareup.okhttp3</groupId>
-            <artifactId>okhttp</artifactId>
-            <version>4.12.0</version>
-        </dependency>
-
-        <!-- Bouncy Castle para Certificados SSL/X.509 -->
-        <dependency>
-            <groupId>org.bouncycastle</groupId>
-            <artifactId>bcprov-jdk18on</artifactId>
-            <version>${bouncycastle.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.bouncycastle</groupId>
-            <artifactId>bcpkix-jdk18on</artifactId>
-            <version>${bouncycastle.version}</version>
-        </dependency>
-    </dependencies>
-
     <build>
-        <resources>
-            <resource>
-                <directory>src/main/java</directory>
-                <excludes>
-                    <exclude>**/*.java</exclude>
-                </excludes>
-            </resource>
-            <resource>
-                <directory>src/main/resources</directory>
-            </resource>
-        </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.13.0</version>
-            </plugin>
-            <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>exec-maven-plugin</artifactId>
-                <version>3.5.1</version>
-                <configuration>
-                    <executable>${java.home}/bin/java</executable>
-                    <arguments>
-                        <argument>--enable-native-access=ALL-UNNAMED</argument>
-                        <argument>-classpath</argument>
-                        <classpath/>
-                        <argument>${exec.mainClass}</argument>
-                    </arguments>
-                </configuration>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-jar-plugin</artifactId>
-                <version>3.4.1</version>
-                <configuration>
-                    <archive>
-                        <manifestEntries>
-                            <Automatic-Module-Name>com.mycompany.blackpassword</Automatic-Module-Name>
-                        </manifestEntries>
-                    </archive>
-                </configuration>
             </plugin>
         </plugins>
     </build>
