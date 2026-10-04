@@ -112,14 +112,7 @@ public class FramePrincipal extends javax.swing.JFrame {
     
     private void cargarImagenFondo() {
         try {
-            java.net.URL imgUrl = getClass().getResource("/img/blckpasswordlogo.png");
-            if (imgUrl == null) {
-                File f = new File("blckpasswordlogo.png");
-                if (f.exists()) imgUrl = f.toURI().toURL();
-            }
-            if (imgUrl == null) {
-                imgUrl = getClass().getResource("/img/blackpassword.png");
-            }
+            java.net.URL imgUrl = getClass().getResource("/img/blackpassword.png");
             if (imgUrl != null) backgroundImage = javax.imageio.ImageIO.read(imgUrl);
         } catch (Exception e) {}
     }

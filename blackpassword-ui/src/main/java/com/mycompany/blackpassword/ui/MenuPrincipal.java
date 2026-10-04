@@ -184,14 +184,7 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
             if (!path.isEmpty() && new File(path).exists()) {
                 backgroundImage = ImageIO.read(new File(path));
             } else {
-                java.net.URL imgUrl = getClass().getResource("/img/blckpasswordlogo.png");
-                if (imgUrl == null) {
-                    File f = new File("blckpasswordlogo.png");
-                    if (f.exists()) imgUrl = f.toURI().toURL();
-                }
-                if (imgUrl == null) {
-                    imgUrl = getClass().getResource("/img/blackpassword.png");
-                }
+                java.net.URL imgUrl = getClass().getResource("/img/blackpassword.png");
                 if (imgUrl != null) backgroundImage = ImageIO.read(imgUrl);
             }
         } catch (Exception e) {
