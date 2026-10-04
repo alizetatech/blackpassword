@@ -240,11 +240,31 @@ public class LocalDatabaseService {
                 "payload_cifrado TEXT NOT NULL, " +
                 "address_book_json TEXT DEFAULT '[]', " +
                 "ts INTEGER NOT NULL)";
+
+        String sqlDogeSemillas = "CREATE TABLE IF NOT EXISTS boveda_doge_semillas (" +
+                "id TEXT PRIMARY KEY, " +
+                "u_h TEXT NOT NULL, " +
+                "codigo_wallet TEXT NOT NULL, " +
+                "red TEXT NOT NULL, " +
+                "direccion TEXT, " +
+                "semilla_cifrada TEXT NOT NULL, " +
+                "salt_b64 TEXT NOT NULL, " +
+                "ts INTEGER NOT NULL)";
+
+        String sqlDogeWallets = "CREATE TABLE IF NOT EXISTS boveda_doge_wallets (" +
+                "id TEXT PRIMARY KEY, " +
+                "u_h TEXT NOT NULL, " +
+                "red TEXT NOT NULL, " +
+                "payload_cifrado TEXT NOT NULL, " +
+                "address_book_json TEXT DEFAULT '[]', " +
+                "ts INTEGER NOT NULL)";
         
         try (Statement stmt = connection.createStatement()) {
             stmt.execute(sqlBoveda);
             stmt.execute(sqlSemillas);
             stmt.execute(sqlWallets);
+            stmt.execute(sqlDogeSemillas);
+            stmt.execute(sqlDogeWallets);
         }
     }
 
@@ -748,4 +768,384 @@ public class LocalDatabaseService {
             System.err.println("[LocalDB] Error guardando libreta de direcciones: " + e.getMessage());
         }
     }
+
+    // ==========================================
+    // --- BÓVEDA DE SEMILLAS DOGECOIN (BIP-44) ---
+    // ==========================================
+
+    public static class DogeSeedEntry {
+        public final String id;
+        public final String userHash;
+        public final String codigoWallet;
+        public final String red;
+        public final String direccion;
+        public final String semillaCifrada;
+        public final String saltB64;
+        public final long timestamp;
+
+        public DogeSeedEntry(String id, String userHash, String codigoWallet, String red, String direccion, String semillaCifrada, String saltB64, long timestamp) {
+            this.id = id;
+            this.userHash = userHash;
+            this.codigoWallet = codigoWallet;
+            this.red = red;
+            this.direccion = direccion;
+            this.semillaCifrada = semillaCifrada;
+            this.saltB64 = saltB64;
+            this.timestamp = timestamp;
+        }
+
+        public String getFormattedDate() {
+            if (timestamp <= 0) return "--";
+            java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm");
+            return sdf.format(new java.util.Date(timestamp));
+        }
+    }
+
+    public static boolean guardarSemillaDogeWallet(String userEmail, String codigoWallet, String red, String direccion, String fraseSemilla, char[] pin) {
+        if (userEmail == null || codigoWallet == null || fraseSemilla == null || pin == null) {
+            return false;
+        }
+        ensureConnected();
+        try {
+            byte[] salt = new byte[16];
+            new SecureRandom().nextBytes(salt);
+            SecretKeySpec key = RSALogica.derivarLlavePBKDF2(pin, salt, 600000);
+
+            byte[] iv = new byte[GCM_IV_SIZE];
+            new SecureRandom().nextBytes(iv);
+
+            Cipher cipher = Cipher.getInstance(CIPHER_ALGO);
+            cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_SIZE, iv));
+
+            byte[] seedBytes = fraseSemilla.getBytes(StandardCharsets.UTF_8);
+            byte[] enc = cipher.doFinal(seedBytes);
+            java.util.Arrays.fill(seedBytes, (byte) 0);
+
+            ByteBuffer bb = ByteBuffer.allocate(iv.length + enc.length);
+            bb.put(iv);
+            bb.put(enc);
+            byte[] encryptedPayload = bb.array();
+
+            String encB64 = Base64.getEncoder().encodeToString(encryptedPayload);
+            String saltB64 = Base64.getEncoder().encodeToString(salt);
+
+            String userHash = RSALogica.hashConstantToHex(userEmail.trim().toLowerCase());
+            long now = System.currentTimeMillis();
+            String id = "DOGE_SEED_" + userHash.substring(0, Math.min(8, userHash.length())) + "_" + now;
+
+            String sql = "INSERT OR REPLACE INTO boveda_doge_semillas (id, u_h, codigo_wallet, red, direccion, semilla_cifrada, salt_b64, ts) " +
+                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                pstmt.setString(1, id);
+                pstmt.setString(2, userHash);
+                pstmt.setString(3, codigoWallet.trim().toUpperCase());
+                pstmt.setString(4, red.toUpperCase());
+                pstmt.setString(5, direccion != null ? direccion : "");
+                pstmt.setString(6, encB64);
+                pstmt.setString(7, saltB64);
+                pstmt.setLong(8, now);
+                pstmt.executeUpdate();
+            }
+
+            // Sincronizar en Firebase Firestore (Nube)
+            try {
+                Firestore db = FirebaseService.getFirestore();
+                if (db != null) {
+                    String colUsuarios = RSALogica.hashConstantToHex("usuarios");
+                    String colSemillas = RSALogica.hashConstantToHex("semillas_doge");
+                    Map<String, Object> cloudData = new HashMap<>();
+                    cloudData.put("id", id);
+                    cloudData.put("codigo_wallet", codigoWallet.trim().toUpperCase());
+                    cloudData.put("red", red.toUpperCase());
+                    cloudData.put("direccion", direccion != null ? direccion : "");
+                    cloudData.put("semilla_cifrada", encB64);
+                    cloudData.put("salt_b64", saltB64);
+                    cloudData.put("ts", now);
+                    cloudData.put("fecha_registro", com.google.cloud.Timestamp.now());
+
+                    db.collection(colUsuarios + "/" + userHash + "/" + colSemillas).document(id).set(cloudData);
+                    System.out.println("[LocalDB->Firestore] Semilla Dogecoin sincronizada en Firebase Firestore: " + codigoWallet);
+                }
+            } catch (Throwable t) {
+                System.err.println("[LocalDB->Firestore] Nota: Firebase offline, semilla Doge persistida localmente: " + t.getMessage());
+            }
+
+            return true;
+        } catch (Exception e) {
+            System.err.println("[LocalDB] Error al guardar semilla Doge en boveda: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public static List<DogeSeedEntry> obtenerSemillasDogeWallet(String userEmail) {
+        List<DogeSeedEntry> list = new ArrayList<>();
+        if (userEmail == null || userEmail.isEmpty()) return list;
+        ensureConnected();
+        String userHash = RSALogica.hashConstantToHex(userEmail.trim().toLowerCase());
+
+        // 1. Sincronizar desde Firebase Cloud Firestore si está disponible
+        try {
+            Firestore db = FirebaseService.getFirestore();
+            if (db != null) {
+                String colUsuarios = RSALogica.hashConstantToHex("usuarios");
+                String colSemillas = RSALogica.hashConstantToHex("semillas_doge");
+                var querySnapshot = db.collection(colUsuarios + "/" + userHash + "/" + colSemillas).get().get();
+                if (querySnapshot != null && !querySnapshot.isEmpty()) {
+                    for (var doc : querySnapshot.getDocuments()) {
+                        String docId = doc.getString("id");
+                        if (docId == null) docId = doc.getId();
+                        String cod = doc.getString("codigo_wallet");
+                        String r = doc.getString("red");
+                        String dir = doc.getString("direccion");
+                        String semEnc = doc.getString("semilla_cifrada");
+                        String saltB = doc.getString("salt_b64");
+                        Long ts = doc.getLong("ts");
+                        if (ts == null) ts = System.currentTimeMillis();
+
+                        String sqlSync = "INSERT OR REPLACE INTO boveda_doge_semillas (id, u_h, codigo_wallet, red, direccion, semilla_cifrada, salt_b64, ts) " +
+                                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+                        try (PreparedStatement pstmt = connection.prepareStatement(sqlSync)) {
+                            pstmt.setString(1, docId);
+                            pstmt.setString(2, userHash);
+                            pstmt.setString(3, cod != null ? cod : "");
+                            pstmt.setString(4, r != null ? r : "MAINNET");
+                            pstmt.setString(5, dir != null ? dir : "");
+                            pstmt.setString(6, semEnc != null ? semEnc : "");
+                            pstmt.setString(7, saltB != null ? saltB : "");
+                            pstmt.setLong(8, ts);
+                            pstmt.executeUpdate();
+                        }
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            System.err.println("[LocalDB->Firestore] Firebase no disponible para semillas Doge, usando datos locales: " + t.getMessage());
+        }
+
+        // 2. Consultar registros consolidados de la BD local
+        try {
+            String sql = "SELECT id, u_h, codigo_wallet, red, direccion, semilla_cifrada, salt_b64, ts FROM boveda_doge_semillas WHERE u_h = ? ORDER BY ts DESC";
+            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                pstmt.setString(1, userHash);
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    while (rs.next()) {
+                        list.add(new DogeSeedEntry(
+                            rs.getString("id"),
+                            rs.getString("u_h"),
+                            rs.getString("codigo_wallet"),
+                            rs.getString("red"),
+                            rs.getString("direccion"),
+                            rs.getString("semilla_cifrada"),
+                            rs.getString("salt_b64"),
+                            rs.getLong("ts")
+                        ));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[LocalDB] Error al obtener semillas Doge: " + e.getMessage());
+        }
+        return list;
+    }
+
+    public static String descifrarSemillaDogeWallet(DogeSeedEntry entry, char[] pin) throws Exception {
+        if (entry == null || pin == null) {
+            throw new IllegalArgumentException("Parametros invalidos para descifrar semilla Doge.");
+        }
+        byte[] salt = Base64.getDecoder().decode(entry.saltB64);
+        SecretKeySpec key = RSALogica.derivarLlavePBKDF2(pin, salt, 600000);
+
+        byte[] rawData = Base64.getDecoder().decode(entry.semillaCifrada);
+        if (rawData.length < GCM_IV_SIZE) {
+            throw new IllegalArgumentException("Datos corruptos de semilla Doge.");
+        }
+
+        byte[] iv = java.util.Arrays.copyOfRange(rawData, 0, GCM_IV_SIZE);
+        byte[] enc = java.util.Arrays.copyOfRange(rawData, GCM_IV_SIZE, rawData.length);
+
+        Cipher cipher = Cipher.getInstance(CIPHER_ALGO);
+        cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_SIZE, iv));
+        byte[] decrypted = cipher.doFinal(enc);
+
+        String frase = new String(decrypted, StandardCharsets.UTF_8);
+        java.util.Arrays.fill(decrypted, (byte) 0);
+        return frase;
+    }
+
+    public static boolean eliminarSemillaDogeWallet(String id) {
+        if (id == null) return false;
+        ensureConnected();
+        try {
+            String uHash = null;
+            String sqlSelect = "SELECT u_h FROM boveda_doge_semillas WHERE id = ?";
+            try (PreparedStatement ps = connection.prepareStatement(sqlSelect)) {
+                ps.setString(1, id);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        uHash = rs.getString("u_h");
+                    }
+                }
+            }
+
+            String sql = "DELETE FROM boveda_doge_semillas WHERE id = ?";
+            int affected = 0;
+            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                pstmt.setString(1, id);
+                affected = pstmt.executeUpdate();
+            }
+
+            // Sincronizar eliminación en Firebase Firestore
+            if (uHash != null) {
+                try {
+                    Firestore db = FirebaseService.getFirestore();
+                    if (db != null) {
+                        String colUsuarios = RSALogica.hashConstantToHex("usuarios");
+                        String colSemillas = RSALogica.hashConstantToHex("semillas_doge");
+                        db.collection(colUsuarios + "/" + uHash + "/" + colSemillas).document(id).delete();
+                        System.out.println("[LocalDB->Firestore] Semilla Doge eliminada en Firebase Firestore: " + id);
+                    }
+                } catch (Throwable t) {
+                    System.err.println("[LocalDB->Firestore] Advertencia: No se pudo eliminar semilla Doge de Firebase: " + t.getMessage());
+                }
+            }
+            return affected > 0;
+        } catch (Exception e) {
+            System.err.println("[LocalDB] Error al eliminar semilla Doge: " + e.getMessage());
+            return false;
+        }
+    }
+
+    // ==============================================
+    // --- BÓVEDA DE BILLETERAS DOGECOIN ACTIVAS ---
+    // ==============================================
+
+    public static boolean guardarDogeWalletActiva(String userEmail, boolean testnet, String payloadCifradoB64) {
+        if (userEmail == null || payloadCifradoB64 == null) return false;
+        ensureConnected();
+        try {
+            String uHash = RSALogica.hashConstantToHex(userEmail);
+            String red = testnet ? "TESTNET" : "MAINNET";
+            String id = uHash + "_" + red.toLowerCase();
+
+            String sql = "INSERT INTO boveda_doge_wallets (id, u_h, red, payload_cifrado, address_book_json, ts) " +
+                         "VALUES (?, ?, ?, ?, COALESCE((SELECT address_book_json FROM boveda_doge_wallets WHERE id = ?), '[]'), ?) " +
+                         "ON CONFLICT(id) DO UPDATE SET " +
+                         "payload_cifrado = excluded.payload_cifrado, " +
+                         "ts = excluded.ts";
+
+            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                pstmt.setString(1, id);
+                pstmt.setString(2, uHash);
+                pstmt.setString(3, red);
+                pstmt.setString(4, payloadCifradoB64);
+                pstmt.setString(5, id);
+                pstmt.setLong(6, System.currentTimeMillis());
+                pstmt.executeUpdate();
+                return true;
+            }
+        } catch (Exception e) {
+            System.err.println("[LocalDB] Error guardando wallet Doge activa: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public static String obtenerDogeWalletActiva(String userEmail, boolean testnet) {
+        if (userEmail == null || userEmail.isEmpty()) return null;
+        ensureConnected();
+        try {
+            String uHash = RSALogica.hashConstantToHex(userEmail);
+            String red = testnet ? "TESTNET" : "MAINNET";
+            String id = uHash + "_" + red.toLowerCase();
+
+            String sql = "SELECT payload_cifrado FROM boveda_doge_wallets WHERE id = ?";
+            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                pstmt.setString(1, id);
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    if (rs.next()) {
+                        String payload = rs.getString("payload_cifrado");
+                        return (payload != null && !payload.isEmpty()) ? payload : null;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[LocalDB] Error obteniendo wallet Doge activa: " + e.getMessage());
+        }
+        return null;
+    }
+
+    public static boolean existeDogeWalletActiva(String userEmail, boolean testnet) {
+        String payload = obtenerDogeWalletActiva(userEmail, testnet);
+        return payload != null && !payload.isEmpty();
+    }
+
+    public static boolean eliminarDogeWalletActiva(String userEmail, boolean testnet) {
+        if (userEmail == null || userEmail.isEmpty()) return false;
+        ensureConnected();
+        try {
+            String uHash = RSALogica.hashConstantToHex(userEmail);
+            String red = testnet ? "TESTNET" : "MAINNET";
+            String id = uHash + "_" + red.toLowerCase();
+
+            String sql = "DELETE FROM boveda_doge_wallets WHERE id = ?";
+            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                pstmt.setString(1, id);
+                return pstmt.executeUpdate() > 0;
+            }
+        } catch (Exception e) {
+            System.err.println("[LocalDB] Error eliminando wallet Doge activa: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public static String obtenerDogeAddressBook(String userEmail, boolean testnet) {
+        if (userEmail == null || userEmail.isEmpty()) return "[]";
+        ensureConnected();
+        try {
+            String uHash = RSALogica.hashConstantToHex(userEmail);
+            String red = testnet ? "TESTNET" : "MAINNET";
+            String id = uHash + "_" + red.toLowerCase();
+
+            String sql = "SELECT address_book_json FROM boveda_doge_wallets WHERE id = ?";
+            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                pstmt.setString(1, id);
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    if (rs.next()) {
+                        String json = rs.getString("address_book_json");
+                        return (json != null && !json.isEmpty()) ? json : "[]";
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[LocalDB] Error obteniendo libreta Doge: " + e.getMessage());
+        }
+        return "[]";
+    }
+
+    public static void guardarDogeAddressBook(String userEmail, boolean testnet, String addressBookJson) {
+        if (userEmail == null || userEmail.isEmpty()) return;
+        ensureConnected();
+        try {
+            String uHash = RSALogica.hashConstantToHex(userEmail);
+            String red = testnet ? "TESTNET" : "MAINNET";
+            String id = uHash + "_" + red.toLowerCase();
+
+            String sql = "INSERT INTO boveda_doge_wallets (id, u_h, red, payload_cifrado, address_book_json, ts) " +
+                         "VALUES (?, ?, ?, '', ?, ?) " +
+                         "ON CONFLICT(id) DO UPDATE SET " +
+                         "address_book_json = excluded.address_book_json, " +
+                         "ts = excluded.ts";
+
+            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                pstmt.setString(1, id);
+                pstmt.setString(2, uHash);
+                pstmt.setString(3, red);
+                pstmt.setString(4, addressBookJson != null ? addressBookJson : "[]");
+                pstmt.setLong(5, System.currentTimeMillis());
+                pstmt.executeUpdate();
+            }
+        } catch (Exception e) {
+            System.err.println("[LocalDB] Error guardando libreta Doge: " + e.getMessage());
+        }
+    }
 }
+

@@ -231,6 +231,7 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
         leftGroup.add(createNavButton("ARCHIVOS", "files.svg", e -> solicitarPinYAcceder("el Gestor de Archivos", "FILES", () -> abrirVentanaUnica(Archivos.class, () -> new Archivos(userEmail)))));
         leftGroup.add(createNavButton("IMÁGENES", "images.svg", e -> solicitarPinYAcceder("la Galería de Imágenes", "IMAGES", () -> abrirVentanaUnica(Imagenes.class, () -> new Imagenes(userEmail, this)))));
         leftGroup.add(createNavButton("WALLET BTC", "key.svg", e -> solicitarPinYAcceder("la Billetera Bitcoin", "BITCOIN_WALLET", () -> abrirVentanaUnica(BilleteraBitcoin.class, () -> new BilleteraBitcoin(userEmail)))));
+        leftGroup.add(createNavButton("WALLET DOGE", "key.svg", e -> solicitarPinYAcceder("la Billetera Dogecoin", "DOGECOIN_WALLET", () -> abrirVentanaUnica(BilleteraDogecoin.class, () -> new BilleteraDogecoin(userEmail)))));
         
         // Botón de Seguridad con Menú Desplegable
         JButton btnSecurity = createNavButton("SEGURIDAD", "security.svg", null);
