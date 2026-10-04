@@ -11,11 +11,14 @@ import com.mycompany.blackpassword.core.util.ToastNotification;
 import com.mycompany.blackpassword.crypto.VaultManager;
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Component;
 import java.io.File;
 import java.nio.file.Files;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
+import java.util.prefs.Preferences;
+import javax.swing.table.DefaultTableCellRenderer;
 import java.awt.Graphics2D;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
@@ -76,6 +79,9 @@ public class Contrasenas extends javax.swing.JInternalFrame {
     private JButton btnCopyUser;
     private JButton btnExportData;
     private JButton btnImportData;
+    private JButton btnTogglePrivacy;
+    private boolean privacyModeActive = false;
+    private static final Preferences prefs = Preferences.userNodeForPackage(Contrasenas.class);
     
     private JLabel jLabelTitulo;
     private List<Map<String, Object>> secretDocumentsRaw = new ArrayList<>();
@@ -83,6 +89,7 @@ public class Contrasenas extends javax.swing.JInternalFrame {
     public Contrasenas(String email) {
         super("Bóveda de Seguridad", false, false, false, false);
         this.userEmail = email;
+        this.privacyModeActive = prefs.getBoolean("privacy_mode_" + userEmail, false);
         validarIntegridad();
         
         try {
@@ -354,22 +361,75 @@ public class Contrasenas extends javax.swing.JInternalFrame {
         panelCenter.setOpaque(false);
         panelCenter.setBorder(BorderFactory.createEmptyBorder(25, 25, 25, 25));
 
-        JPanel panelSearch = new JPanel(new BorderLayout());
+        JPanel panelSearch = new JPanel(new BorderLayout(15, 0));
         panelSearch.setOpaque(false);
         txtSearch = new JTextField();
         txtSearch.setPreferredSize(new Dimension(100, 42));
         panelSearch.add(txtSearch, BorderLayout.CENTER);
+
+        btnTogglePrivacy = new JButton();
+        btnTogglePrivacy.setPreferredSize(new Dimension(210, 42));
+        btnTogglePrivacy.addActionListener(e -> {
+            privacyModeActive = !privacyModeActive;
+            prefs.putBoolean("privacy_mode_" + userEmail, privacyModeActive);
+            updatePrivacyButton();
+            table.repaint();
+            ToastNotification.show(this, 
+                privacyModeActive ? "Modo Privacidad activado (Identidades ocultas)" : "Modo Privacidad desactivado (Identidades visibles)", 
+                ToastNotification.Type.INFO);
+        });
+        updatePrivacyButton();
+        panelSearch.add(btnTogglePrivacy, BorderLayout.EAST);
         panelCenter.add(panelSearch, BorderLayout.NORTH);
 
         model = new DefaultTableModel(new Object[]{"SITIO / SERVICIO", "USUARIO / IDENTIDAD", "ÚLTIMA ACTUALIZACIÓN"}, 0) {
             @Override public boolean isCellEditable(int r, int c) { return false; }
         };
         table = new JTable(model);
+
+        // Renderizador con máscara para Modo Privacidad (Censura de Usuario como contraseña para grabaciones)
+        table.getColumnModel().getColumn(1).setCellRenderer(new DefaultTableCellRenderer() {
+            @Override
+            public Component getTableCellRendererComponent(JTable table, Object value,
+                    boolean isSelected, boolean hasFocus, int row, int column) {
+                JLabel c = (JLabel) super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+                if (privacyModeActive && value != null && !value.toString().trim().isEmpty() && !value.toString().equals("N/A") && !value.toString().startsWith("⚠️")) {
+                    int len = Math.min(Math.max(value.toString().length(), 8), 16);
+                    c.setText("•".repeat(len));
+                    c.setToolTipText("Identidad protegida por Modo Privacidad");
+                } else {
+                    c.setText(value != null ? value.toString() : "");
+                    c.setToolTipText(value != null ? value.toString() : null);
+                }
+                return c;
+            }
+        });
+
         JScrollPane scroll = new JScrollPane(table);
         scroll.setBorder(BorderFactory.createLineBorder(new Color(230, 230, 230)));
         panelCenter.add(scroll, BorderLayout.CENTER);
         
         getContentPane().add(panelCenter, BorderLayout.CENTER);
+    }
+
+    private void updatePrivacyButton() {
+        if (privacyModeActive) {
+            btnTogglePrivacy.setText("USUARIOS: OCULTOS");
+            btnTogglePrivacy.setToolTipText("Modo Privacidad Activo: Los usuarios/emails se muestran censurados como contraseñas para grabaciones. Clic para mostrar.");
+            btnTogglePrivacy.putClientProperty(FlatClientProperties.STYLE, 
+                "arc: 14; background: #107C10; foreground: #FFFFFF; hoverBackground: #0E680E; font: bold 12");
+            try {
+                btnTogglePrivacy.setIcon(new FlatSVGIcon("img/shield.svg", 18, 18));
+            } catch (Exception ignored) {}
+        } else {
+            btnTogglePrivacy.setText("USUARIOS: VISIBLES");
+            btnTogglePrivacy.setToolTipText("Modo Privacidad Inactivo: Clic para ocultar los usuarios/emails en pantalla.");
+            btnTogglePrivacy.putClientProperty(FlatClientProperties.STYLE, 
+                "arc: 14; background: #F3F3F3; foreground: #333333; hoverBackground: #E5E5E5; font: bold 12");
+            try {
+                btnTogglePrivacy.setIcon(new FlatSVGIcon("img/unlock.svg", 18, 18));
+            } catch (Exception ignored) {}
+        }
     }
 
     private void addLabeledField(JPanel p, String label, JTextField f, GridBagConstraints gbc, int row) {
