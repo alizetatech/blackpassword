@@ -3,7 +3,9 @@ package com.mycompany.blackpassword.services;
 import com.google.cloud.firestore.Firestore;
 import com.google.cloud.firestore.Query;
 import com.google.cloud.firestore.QueryDocumentSnapshot;
+import com.google.cloud.Timestamp;
 import com.mycompany.blackpassword.crypto.RSALogica;
+import com.mycompany.blackpassword.crypto.SecureCharArray;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -49,8 +51,14 @@ public class IntrusionService {
         try {
             Firestore db = FirebaseService.getFirestore();
             Map<String, Object> alert = new HashMap<>();
-            alert.put("timestamp", com.google.cloud.Timestamp.now());
-            alert.put("email_hash", RSALogica.hashToHex(email));
+            alert.put("timestamp", Timestamp.now());
+            
+            char[] emailChars = email.toCharArray();
+            char[] emailHashChars = RSALogica.hashToHex(emailChars, null);
+            alert.put("email_hash", new String(emailHashChars));
+            SecureCharArray.clear(emailChars);
+            SecureCharArray.clear(emailHashChars);
+            
             alert.put("tipo", "CRITICAL_INTRUSION");
             alert.put("origen", type);
             alert.put("detalles", "Ataque detectado: " + type + ". Intentos: " + attempts + ". Caché local purgada.");
@@ -67,7 +75,11 @@ public class IntrusionService {
         List<Map<String, Object>> alerts = new ArrayList<>();
         try {
             Firestore db = FirebaseService.getFirestore();
-            String emailHash = RSALogica.hashToHex(email);
+            char[] emailChars = email.toCharArray();
+            char[] emailHashChars = RSALogica.hashToHex(emailChars, null);
+            String emailHash = new String(emailHashChars);
+            SecureCharArray.clear(emailChars);
+            SecureCharArray.clear(emailHashChars);
             
             var query = db.collection("intrusion_alerts")
                     .whereEqualTo("email_hash", emailHash)
@@ -88,6 +100,7 @@ public class IntrusionService {
 
     public static void markAsRead(String alertId) {
         try {
+            java.util.Objects.requireNonNull(alertId);
             FirebaseService.getFirestore().collection("intrusion_alerts").document(alertId).update("leida", true);
         } catch (Exception e) {
             System.err.println("[IntrusionService] Error al marcar alerta como leída: " + e.getMessage());

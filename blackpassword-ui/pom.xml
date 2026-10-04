@@ -11,6 +11,10 @@
     <dependencies>
         <dependency>
             <groupId>com.mycompany</groupId>
+            <artifactId>blackpassword-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.mycompany</groupId>
             <artifactId>blackpassword-services</artifactId>
         </dependency>
 

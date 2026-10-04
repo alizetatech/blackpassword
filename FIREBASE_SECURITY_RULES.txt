@@ -1,55 +1,47 @@
-// BLACKPASSWORD - REGLAS DE SEGURIDAD v12.0-ZERO-TRUST
-// Copia y pega esto en Firestore -> Rules.
-// Estas reglas validan la identidad cruzada y el estado de la cuenta mediante Custom Claims.
-
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Función para validar que el token tiene los claims de Blackpassword y la cuenta está activa
-    function isVerifiedIdentity(emailHash) {
-      return request.auth != null && 
-             request.auth.token.email_hash == emailHash &&
-             request.auth.token.role == 'USER' &&
-             request.auth.token.account_status == 'ACTIVE';
+
+    // --- FUNCIONES DE AYUDA ---
+    function isAuthenticated() {
+      return request.auth != null;
     }
 
-    // Colección de Usuarios (Document ID = Email Hash)
-    match /usuarios/{emailHash} {
-      allow read, write: if isVerifiedIdentity(emailHash);
+    // Verifica que el hash del documento coincida con el hash en el token del usuario
+    function isOwner(userHash) {
+      return isAuthenticated() && request.auth.token.email_hash == userHash;
+    }
 
-      // Sub-colecciones blindadas
-      match /boveda/{secretId} {
-        allow read, write: if isVerifiedIdentity(emailHash);
-      }
+    // --- COLECCIÓN DE USUARIOS (Hashed: "usuarios") ---
+    match /1f4ade47160c389903c1a9e19d2a6739681fa8955f1c7353084e638675297b5d/{userHash} {
+      // Solo el dueño del hash puede leer/escribir su perfil
+      allow read, write: if isOwner(userHash);
 
-      match /archivos/{fileId} {
-        allow read, write: if isVerifiedIdentity(emailHash);
+      // Sub-colección BÓVEDA (Hashed: "boveda")
+      match /77bcededfba243bed38327a48293c4b61267ccc9ef5a7c374f709a81fcf60031/{secretId} {
+        allow read, write: if isOwner(userHash);
       }
       
+      // Sub-colección ARCHIVOS (Hashed: "archivos")
+      match /3340292fcf65c3a26b646a82989d04d8b680bee67b9aab516ac0622cdc3e80e0/{fileId} {
+        allow read, write: if isOwner(userHash);
+      }
+      
+      // Sub-colección IMÁGENES (Literal: "imagenes")
       match /imagenes/{imgId} {
-        allow read, write: if isVerifiedIdentity(emailHash);
+        allow read, write: if isOwner(userHash);
       }
     }
 
-    // Bitácora de Auditoría: Solo el dueño o un ADMIN puede leer
+    // --- LOGS DE AUDITORÍA ---
     match /audit_logs/{logId} {
-      allow create: if request.auth != null && request.auth.token.account_status == 'ACTIVE';
-      allow read: if request.auth != null && 
-                   (request.auth.token.email_hash == resource.data.email_hash || 
-                    request.auth.token.role == 'ADMIN');
-      allow update, delete: if false;
+      allow create: if isAuthenticated();
+      allow read: if false; // Solo administradores desde la consola
     }
 
-    // Alertas de Intrusión: Solo ADMIN puede gestionar
+    // --- ALERTAS DE INTRUSIÓN ---
     match /intrusion_alerts/{alertId} {
-      allow create: if true; 
-      allow read, update: if request.auth != null && request.auth.token.role == 'ADMIN';
-      allow delete: if false;
-    }
-
-    // Bloqueo Global por Defecto
-    match /{document=**} {
+      allow create: if true; // Cualquier intento fallido debe poder registrarse
       allow read, write: if false;
     }
   }

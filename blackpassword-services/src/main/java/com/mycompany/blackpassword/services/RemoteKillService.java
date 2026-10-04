@@ -41,10 +41,11 @@ public class RemoteKillService {
         if (currentUserEmail == null) return;
 
         Firestore db = FirebaseService.getFirestore();
-        String colName = RSALogica.hashToHex("usuarios");
-        String docId = RSALogica.hashToHex(currentUserEmail);
+        String colName = RSALogica.hashConstantToHex("usuarios");
+        String docId = RSALogica.hashConstantToHex(currentUserEmail);
         
-        DocumentSnapshot doc = db.collection(colName).document(docId).get().get();
+        DocumentSnapshot doc = db.collection(java.util.Objects.requireNonNull(colName))
+                .document(java.util.Objects.requireNonNull(docId)).get().get();
         
         if (doc.exists()) {
             String status = doc.getString("status");
@@ -76,9 +77,10 @@ public class RemoteKillService {
         try {
             // 1. Actualizar Firestore para monitoreo activo
             Firestore db = FirebaseService.getFirestore();
-            String colName = RSALogica.hashToHex("usuarios");
-            String docId = RSALogica.hashToHex(email);
-            db.collection(colName).document(docId).update("status", "COMPROMISED").get();
+            String colName = RSALogica.hashConstantToHex("usuarios");
+            String docId = RSALogica.hashConstantToHex(email);
+            db.collection(java.util.Objects.requireNonNull(colName))
+                .document(java.util.Objects.requireNonNull(docId)).update("status", "COMPROMISED").get();
 
             // 2. Actualizar Custom Claims para bloqueo inmediato por Reglas
             UserRecord user = FirebaseService.getAuth().getUserByEmail(email);

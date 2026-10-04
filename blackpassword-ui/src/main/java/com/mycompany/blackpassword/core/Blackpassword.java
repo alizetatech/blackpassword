@@ -1,5 +1,6 @@
 package com.mycompany.blackpassword.core;
 
+import com.mycompany.blackpassword.core.util.ToastNotification;
 import com.mycompany.blackpassword.services.AuditService;
 import com.mycompany.blackpassword.ui.FramePrincipal;
 import com.formdev.flatlaf.FlatLightLaf;
@@ -55,6 +56,12 @@ public class Blackpassword {
     }
 
     public static void main(String[] args) {
+        // 0. CAPA DE SEGURIDAD HSM: REGISTRO DE AUTO-DESTRUCCIÓN
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            System.out.println("[HSM] 🛡️ Cierre detectado. Iniciando incineración de llaves físicas...");
+            com.mycompany.blackpassword.services.hsm.KeyAnchorService.getInstance().destroyAll();
+        }));
+
         // REGISTRO DE NOTIFICACIONES (Audit -> UI)
         AuditService.setNotificationListener((accion, detalles) -> {
             SwingUtilities.invokeLater(() -> {

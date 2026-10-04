@@ -1,2 +1,2 @@
-// File moved back to ui module to avoid circular dependencies.
-// This file can be safely deleted.
+// Archivo neutralizado para resolver conflicto de Split Package.
+// La clase principal Blackpassword.java reside exclusivamente en el módulo UI.

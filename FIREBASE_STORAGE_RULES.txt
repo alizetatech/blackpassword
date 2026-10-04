@@ -1,26 +1,34 @@
-// BLACKPASSWORD - REGLAS DE STORAGE v11.0-ZERO-TRUST
+// BLACKPASSWORD - REGLAS DE STORAGE v18.0-ESTRICTO-ZERO-TRUST
 // Copia y pega esto en Storage -> Rules.
 
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     
-    // Función de validación de ruta basada en el email_hash del token
-    function ownsFolder(emailHash) {
-      return request.auth != null && request.auth.token.email_hash == emailHash;
+    // Función de verificación de identidad y estado
+    function isVerified(emailHash) {
+      return request.auth != null && 
+             request.auth.token.email_hash == emailHash &&
+             request.auth.token.account_status == 'ACTIVE';
     }
 
-    // Imágenes: Solo el dueño del hash puede acceder
+    // Carpeta de Imágenes: Solo el dueño lee y escribe
     match /imagenes/{emailHash}/{imageId} {
-      allow read, write: if ownsFolder(emailHash);
+      allow read, write: if isVerified(emailHash);
     }
 
-    // Archivos: Solo el dueño del hash puede acceder
+    // Carpeta de Archivos: Solo el dueño lee y escribe
     match /archivos/{emailHash}/{fileId} {
-      allow read, write: if ownsFolder(emailHash);
+      allow read, write: if isVerified(emailHash);
     }
 
-    // Bloqueo total de lo demás
+    // Carpeta de Perfiles: Solo el dueño gestiona su avatar
+    match /perfiles/{emailHash}/{photoId} {
+      allow read: if request.auth != null; // Cualquiera logueado puede ver el avatar
+      allow write: if isVerified(emailHash);
+    }
+
+    // Bloqueo global de lo demás
     match /{allPaths=**} {
       allow read, write: if false;
     }

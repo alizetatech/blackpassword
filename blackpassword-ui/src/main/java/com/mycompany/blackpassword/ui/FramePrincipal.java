@@ -2,7 +2,6 @@ package com.mycompany.blackpassword.ui;
 
 import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.FlatDarkLaf;
-import com.formdev.flatlaf.FlatIntelliJLaf;
 import com.formdev.flatlaf.FlatLaf;
 import com.formdev.flatlaf.FlatLightLaf;
 import com.formdev.flatlaf.extras.FlatAnimatedLafChange;
@@ -88,6 +87,13 @@ public class FramePrincipal extends javax.swing.JFrame {
     private void setupMenuActions() {
         jMenu2.removeAll();
         
+        JMenuItem itemGenConfig = new JMenuItem("⚙️ Generador de Configuración de Inicio");
+        itemGenConfig.addActionListener(e -> {
+            GeneradorConfiguracionInicio configFrame = new GeneradorConfiguracionInicio();
+            jDesktopPane1.add(configFrame); centerInternalFrame(configFrame); configFrame.setVisible(true);
+        });
+        jMenu2.add(itemGenConfig);
+
         JMenuItem itemGenRsa = new JMenuItem("🔑 Generador de Llaves RSA");
         itemGenRsa.addActionListener(e -> {
             GeneradorLlavesRsa rsaFrame = new GeneradorLlavesRsa();
@@ -102,12 +108,33 @@ public class FramePrincipal extends javax.swing.JFrame {
         });
         jMenu2.add(itemCifrador);
 
+        JMenuItem itemGenCek = new JMenuItem("🛡️ Generador de CEK (AES-256)");
+        itemGenCek.addActionListener(e -> {
+            GeneradorCek cekFrame = new GeneradorCek();
+            jDesktopPane1.add(cekFrame); centerInternalFrame(cekFrame); cekFrame.setVisible(true);
+        });
+        jMenu2.add(itemGenCek);
+
+        JMenuItem itemBlindador = new JMenuItem("📦 Blindador de Archivos KEK");
+        itemBlindador.addActionListener(e -> {
+            BlindadorArchivos blindador = new BlindadorArchivos();
+            jDesktopPane1.add(blindador); centerInternalFrame(blindador); blindador.setVisible(true);
+        });
+        jMenu2.add(itemBlindador);
+
         JMenuItem itemEncriptador = new JMenuItem("🔐 Encriptador de Algoritmos");
         itemEncriptador.addActionListener(e -> {
             EncriptadorDeAlgoritmos encriptador = new EncriptadorDeAlgoritmos();
             jDesktopPane1.add(encriptador); centerInternalFrame(encriptador); encriptador.setVisible(true);
         });
         jMenu2.add(itemEncriptador);
+
+        JMenuItem itemGeneradorQr = new JMenuItem("📱 Generador de Códigos QR");
+        itemGeneradorQr.addActionListener(e -> {
+            GeneradorQr qrFrame = new GeneradorQr();
+            jDesktopPane1.add(qrFrame); centerInternalFrame(qrFrame); qrFrame.setVisible(true);
+        });
+        jMenu2.add(itemGeneradorQr);
 
         jMenu3.removeAll();
         JMenuItem itemLight = new JMenuItem("☀️ Modo Claro");
@@ -127,7 +154,6 @@ public class FramePrincipal extends javax.swing.JFrame {
         } catch (Exception ex) {}
     }
 
-    @SuppressWarnings("unchecked")
     private void initComponents() {
         jDesktopPane1 = new javax.swing.JDesktopPane() {
             @Override protected void paintComponent(Graphics g) {
@@ -145,9 +171,8 @@ public class FramePrincipal extends javax.swing.JFrame {
             }
         };
         jMenuBar1 = new javax.swing.JMenuBar();
-        jMenu1 = new javax.swing.JMenu(); jMenu2 = new javax.swing.JMenu(); jMenu3 = new javax.swing.JMenu();
+        jMenu2 = new javax.swing.JMenu(); jMenu3 = new javax.swing.JMenu();
         setDefaultCloseOperation(javax.swing.WindowConstants.EXIT_ON_CLOSE);
-        jMenu1.setText("Archivo"); jMenuBar1.add(jMenu1);
         jMenu2.setText("Seguridad"); jMenuBar1.add(jMenu2);
         jMenu3.setText("Apariencia"); jMenuBar1.add(jMenu3);
         setJMenuBar(jMenuBar1);
@@ -157,7 +182,6 @@ public class FramePrincipal extends javax.swing.JFrame {
     }
 
     private javax.swing.JDesktopPane jDesktopPane1;
-    private javax.swing.JMenu jMenu1;
     private javax.swing.JMenu jMenu2;
     private javax.swing.JMenu jMenu3;
     private javax.swing.JMenuBar jMenuBar1;

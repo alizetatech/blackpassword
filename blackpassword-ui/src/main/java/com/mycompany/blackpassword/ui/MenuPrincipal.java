@@ -2,7 +2,7 @@ package com.mycompany.blackpassword.ui;
 
 import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
-import com.mycompany.blackpassword.core.AnimationUtils;
+import com.mycompany.blackpassword.core.util.AnimationUtils;
 import com.mycompany.blackpassword.services.AuditService;
 import com.mycompany.blackpassword.services.LocalDatabaseService;
 import com.mycompany.blackpassword.services.RemoteKillService;
@@ -219,7 +219,7 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
     private void setupTopNavigation() {
         JPanel topBar = new JPanel(new BorderLayout());
         topBar.setPreferredSize(new Dimension(getWidth(), 75));
-        topBar.putClientProperty(FlatClientProperties.STYLE, "background: #FFFFFF; border: 0,0,1,0,#EBEBEB; margin: 0,15,0,15");
+        topBar.putClientProperty(FlatClientProperties.STYLE, "background: #FFFFFF; border: 0,0,1,0,#EBEBEB");
         
         JPanel buttonsContainer = new JPanel(new BorderLayout());
         buttonsContainer.setOpaque(false);
@@ -227,20 +227,28 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
         JPanel leftGroup = new JPanel(new FlowLayout(FlowLayout.LEFT, 15, 18));
         leftGroup.setOpaque(false);
         
-        leftGroup.add(createNavButton("BÓVEDA", "vault.svg", e -> solicitarPinParaBoveda()));
-        leftGroup.add(createNavButton("ARCHIVOS", "files.svg", e -> abrirVentanaUnica(Archivos.class, () -> new Archivos(userEmail))));
-        leftGroup.add(createNavButton("IMÁGENES", "images.svg", e -> abrirVentanaUnica(Imagenes.class, () -> new Imagenes(userEmail, this))));
+        leftGroup.add(createNavButton("BÓVEDA", "vault.svg", e -> solicitarPinYAcceder("la Bóveda", "VAULT", () -> abrirVentanaUnica(Contrasenas.class, () -> new Contrasenas(userEmail)))));
+        leftGroup.add(createNavButton("ARCHIVOS", "files.svg", e -> solicitarPinYAcceder("el Gestor de Archivos", "FILES", () -> abrirVentanaUnica(Archivos.class, () -> new Archivos(userEmail)))));
+        leftGroup.add(createNavButton("IMÁGENES", "images.svg", e -> solicitarPinYAcceder("la Galería de Imágenes", "IMAGES", () -> abrirVentanaUnica(Imagenes.class, () -> new Imagenes(userEmail, this)))));
         
         // Botón de Seguridad con Menú Desplegable
         JButton btnSecurity = createNavButton("SEGURIDAD", "security.svg", null);
         JPopupMenu securityMenu = new JPopupMenu();
         securityMenu.add(createMenuItem("GENERADOR PGP", "key.svg", e -> abrirVentanaUnica(GeneradorPgp.class, () -> new GeneradorPgp())));
         securityMenu.add(createMenuItem("GENERADOR RSA", "rsa.svg", e -> abrirVentanaUnica(GeneradorLlavesRsa.class, () -> new GeneradorLlavesRsa())));
+        securityMenu.add(createMenuItem("GENERADOR CEK (AES-256)", "security.svg", e -> abrirVentanaUnica(GeneradorCek.class, () -> new GeneradorCek())));
         securityMenu.add(createMenuItem("ENCRIPTADOR ALGORITMOS", "shield.svg", e -> abrirVentanaUnica(EncriptadorDeAlgoritmos.class, () -> new EncriptadorDeAlgoritmos())));
         
         btnSecurity.addActionListener(e -> securityMenu.show(btnSecurity, 0, btnSecurity.getHeight()));
         leftGroup.add(btnSecurity);
         
+        // Botón de Herramientas con Menú Desplegable
+        JButton btnTools = createNavButton("HERRAMIENTAS", "report.svg", null);
+        JPopupMenu toolsMenu = new JPopupMenu();
+        toolsMenu.add(createMenuItem("GENERADOR QR", "security.svg", e -> abrirVentanaUnica(GeneradorQr.class, () -> new GeneradorQr())));
+        btnTools.addActionListener(e -> toolsMenu.show(btnTools, 0, btnTools.getHeight()));
+        leftGroup.add(btnTools);
+
         leftGroup.add(createNavButton("REPORTES", "report.svg", e -> abrirVentanaUnica(Reportes.class, () -> new Reportes(userEmail))));
         
         JPanel centerGroup = new JPanel(new FlowLayout(FlowLayout.CENTER, 15, 22));
@@ -294,22 +302,22 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
         return item;
     }
 
-    private void solicitarPinParaBoveda() {
+    private void solicitarPinYAcceder(String moduloDesc, String logPrefix, Runnable onSuccess) {
         validarIntegridadIdentidad(); 
 
         JPasswordField pinField = new JPasswordField(4);
         pinField.putClientProperty(FlatClientProperties.STYLE, "showRevealButton: true;");
-        Object[] message = {"Para acceder a la bóveda, ingrese su PIN de seguridad:", pinField};
+        Object[] message = {"Para acceder a " + moduloDesc + ", ingrese su PIN de seguridad:", pinField};
         
         int option = JOptionPane.showConfirmDialog(this, message, "Verificación de Seguridad", JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
         
         if (option == JOptionPane.OK_OPTION) {
             char[] pin = pinField.getPassword();
             if (SecuritySession.verifyUserPin(pin)) {
-                AuditService.log(userEmail, "VAULT_ACCESS_SUCCESS", "Acceso a la bóveda autorizado por PIN.");
-                abrirVentanaUnica(Contrasenas.class, () -> new Contrasenas(userEmail));
+                AuditService.log(userEmail, logPrefix + "_ACCESS_SUCCESS", "Acceso a " + moduloDesc + " autorizado por PIN.");
+                onSuccess.run();
             } else {
-                AuditService.log(userEmail, "VAULT_ACCESS_DENIED", "Intento de acceso a la bóveda con PIN incorrecto.");
+                AuditService.log(userEmail, logPrefix + "_ACCESS_DENIED", "Intento de acceso a " + moduloDesc + " con PIN incorrecto.");
                 JOptionPane.showMessageDialog(this, "PIN incorrecto. Acceso denegado.", "Error de Seguridad", JOptionPane.ERROR_MESSAGE);
             }
             Arrays.fill(pin, '0'); 

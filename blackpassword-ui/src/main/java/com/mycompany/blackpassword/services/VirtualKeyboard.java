@@ -2,7 +2,6 @@ package com.mycompany.blackpassword.services;
 
 import com.formdev.flatlaf.FlatClientProperties;
 import java.awt.*;
-import java.awt.event.ActionEvent;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -16,7 +15,6 @@ public class VirtualKeyboard extends JDialog {
 
     private final JPasswordField targetField;
     private final JPanel keyPanel;
-    private boolean shiftActive = false;
 
     public VirtualKeyboard(Window owner, JPasswordField target) {
         super(owner, "Teclado Seguro", ModalityType.APPLICATION_MODAL);

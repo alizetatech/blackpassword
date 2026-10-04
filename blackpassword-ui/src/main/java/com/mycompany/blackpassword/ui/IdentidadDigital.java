@@ -2,13 +2,12 @@ package com.mycompany.blackpassword.ui;
 
 import com.formdev.flatlaf.FlatClientProperties;
 import com.google.cloud.firestore.Firestore;
-import com.mycompany.blackpassword.services.AuditService;
 import com.mycompany.blackpassword.services.CertificateService;
 import com.mycompany.blackpassword.services.FirebaseService;
 import com.mycompany.blackpassword.crypto.RSALogica;
 import com.mycompany.blackpassword.services.RemoteKillService;
 import com.mycompany.blackpassword.services.SecuritySession;
-import com.mycompany.blackpassword.core.ToastNotification;
+import com.mycompany.blackpassword.core.util.ToastNotification;
 import java.awt.Color;
 import java.awt.Font;
 import java.nio.charset.StandardCharsets;
@@ -52,8 +51,9 @@ public class IdentidadDigital extends javax.swing.JInternalFrame {
     private void cargarCertificadoSSL() {
         try {
             Firestore db = FirebaseService.getFirestore();
-            String docId = RSALogica.hashToHex(userEmail);
-            var doc = db.collection(RSALogica.hashToHex("usuarios")).document(docId).get().get();
+            String docId = RSALogica.hashConstantToHex(userEmail);
+            var doc = db.collection(java.util.Objects.requireNonNull(RSALogica.hashConstantToHex("usuarios")))
+                        .document(java.util.Objects.requireNonNull(docId)).get().get();
             
             StringBuilder sb = new StringBuilder();
             
@@ -68,7 +68,7 @@ public class IdentidadDigital extends javax.swing.JInternalFrame {
                 String claimUidHash = (String) claims.get("uid_hash");
                 String claimPubKeyHash = (String) claims.get("pubkey_hash");
                 
-                String localEmailHash = RSALogica.hashToHex(userEmail);
+                String localEmailHash = RSALogica.hashConstantToHex(userEmail);
                 String localUidHash = SecuritySession.getLocalUidHash();
                 String localPubKeyHash = RSALogica.hashPublicKey(SecuritySession.getPublicKey());
                 String typingProfile = SecuritySession.getTypingProfile();
@@ -155,7 +155,6 @@ public class IdentidadDigital extends javax.swing.JInternalFrame {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private void initComponents() {
         jPanelCard = new javax.swing.JPanel();
         lblTitulo = new javax.swing.JLabel();

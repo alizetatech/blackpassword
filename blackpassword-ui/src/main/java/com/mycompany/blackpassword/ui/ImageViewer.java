@@ -1,7 +1,6 @@
 package com.mycompany.blackpassword.ui;
 
 import com.formdev.flatlaf.FlatClientProperties;
-import com.mycompany.blackpassword.core.AnimationUtils;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.Image;

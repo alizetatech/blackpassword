@@ -7,4 +7,15 @@
         <version>1.0-SNAPSHOT</version>
     </parent>
     <artifactId>blackpassword-core</artifactId>
+    
+    <dependencies>
+        <dependency>
+            <groupId>com.formdev</groupId>
+            <artifactId>flatlaf</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.formdev</groupId>
+            <artifactId>flatlaf-extras</artifactId>
+        </dependency>
+    </dependencies>
 </project>

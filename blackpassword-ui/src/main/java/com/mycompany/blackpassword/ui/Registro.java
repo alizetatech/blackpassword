@@ -5,23 +5,20 @@ import com.google.cloud.firestore.Firestore;
 import com.google.firebase.auth.UserRecord;
 import com.mycompany.blackpassword.services.CertificateService;
 import com.mycompany.blackpassword.services.FirebaseService;
-import com.mycompany.blackpassword.crypto.RSALogica;
 import com.mycompany.blackpassword.services.SecuritySession;
 import com.mycompany.blackpassword.services.SeedPhraseManager;
 import com.mycompany.blackpassword.services.TypingDNAManager;
-import com.mycompany.blackpassword.services.SeedPhraseManager;
-import com.mycompany.blackpassword.services.TypingDNAManager;
+import com.mycompany.blackpassword.crypto.RSALogica;
+import com.mycompany.blackpassword.crypto.SecureCharArray;
 import java.awt.Color;
 import java.awt.Font;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.nio.charset.StandardCharsets;
-import java.security.KeyPair;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
-import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
@@ -97,7 +94,6 @@ public class Registro extends javax.swing.JInternalFrame {
         });
     }
 
-    @SuppressWarnings("unchecked")
     private void initComponents() {
 
         jPanelCard = new javax.swing.JPanel();
@@ -251,28 +247,34 @@ public class Registro extends javax.swing.JInternalFrame {
         int confirm = JOptionPane.showConfirmDialog(this, message, "Generación de Frase Semilla", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
         
         if (confirm != JOptionPane.YES_OPTION) {
-            Arrays.fill(seedChars, (char) 0);
+            SecureCharArray.clear(seedChars);
             return;
         }
 
         try {
-            String hashedPass = RSALogica.hashSHA256(pass, RSALogica.getUniversalSalt());
-            String hashedSeed = RSALogica.hashSHA256(seedChars, RSALogica.getUniversalSalt());
-            String hashedPin = RSALogica.hashSHA256(pin, RSALogica.getUniversalSalt());
+            byte[] userSalt = RSALogica.generarSalt();
+            String hashedPass = RSALogica.hashSHA256(pass, userSalt);
+            String hashedSeed = RSALogica.hashSHA256(seedChars, userSalt);
+            String hashedPin = RSALogica.hashSHA256(pin, userSalt);
             
             UserRecord.CreateRequest request = new UserRecord.CreateRequest()
                 .setEmail(correo)
                 .setPassword(new String(pass))
                 .setDisplayName(nombre + " " + apellido);
             UserRecord userRecord = FirebaseService.getAuth().createUser(request);
+            
+            // Limpiar material sensible inmediatamente (Inmunidad Nivel 11)
+            SecureCharArray.clear(pass);
+            SecureCharArray.clear(pin);
+            SecureCharArray.clear(seedChars);
 
             // --- IMPLEMENTACIÓN DE CUSTOM CLAIMS (RSA-BINDING + STATUS) ---
             Map<String, Object> claims = new HashMap<>();
             claims.put("role", "USER");
             claims.put("security_level", 1);
             claims.put("account_status", "ACTIVE");
-            claims.put("uid_hash", RSALogica.hashToHex(userRecord.getUid()));
-            claims.put("email_hash", RSALogica.hashToHex(correo));
+            claims.put("uid_hash", RSALogica.hashConstantToHex(userRecord.getUid()));
+            claims.put("email_hash", RSALogica.hashConstantToHex(correo));
             claims.put("pubkey_hash", RSALogica.hashPublicKey(SecuritySession.getPublicKey())); 
             FirebaseService.setCustomClaims(userRecord.getUid(), claims);
             // ----------------------------------------------------
@@ -291,18 +293,19 @@ public class Registro extends javax.swing.JInternalFrame {
 
             Firestore db = FirebaseService.getFirestore();
             Map<String, Object> datos = new HashMap<>();
-            datos.put("uid_hash", RSALogica.hashToHex(userRecord.getUid()));
+            datos.put("uid_hash", RSALogica.hashConstantToHex(userRecord.getUid()));
             datos.put("perfil_cifrado", payloadBase64);
             datos.put("certificado_digital", encryptedCert); 
-            datos.put("codigopin", hashedPin); 
+            datos.put("user_salt", Base64.getEncoder().encodeToString(userSalt));
+            datos.put("pin_hash", hashedPin); 
             datos.put("typing_profile", typingProfile); 
             datos.put("fecha_registro", com.google.cloud.Timestamp.now());
             datos.put("status", "ACTIVE");
             
-            String colName = RSALogica.hashToHex("usuarios");
-            String docId = RSALogica.hashToHex(correo);
-            
-            db.collection(colName).document(docId).set(datos).get();
+            String colName = RSALogica.hashConstantToHex("usuarios");
+            String docId = RSALogica.hashConstantToHex(correo);
+            var writeResultFuture = db.collection(java.util.Objects.requireNonNull(colName)).document(java.util.Objects.requireNonNull(docId)).set(datos);
+            writeResultFuture.get();
             
             JOptionPane.showMessageDialog(this, "¡Registro Exitoso!\nSu identidad SSL ha sido certificada.", "Seguridad Máxima", JOptionPane.INFORMATION_MESSAGE);
             this.dispose();

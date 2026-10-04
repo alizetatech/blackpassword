@@ -32,13 +32,13 @@ public class ReportService {
                 // Encabezado Premium
                 contentStream.beginText();
                 contentStream.setFont(PDType1Font.HELVETICA_BOLD, 20);
-                contentStream.setNonStrokingColor(0, 120, 212); // Azul Blackpassword
+                contentStream.setNonStrokingColor(new Color(0, 120, 212)); // Azul Blackpassword
                 contentStream.newLineAtOffset(50, 750);
                 contentStream.showText("BLACKPASSWORD - INFORME DE SEGURIDAD");
                 contentStream.endText();
-
-                contentStream.setLineWidth(1f);
-                contentStream.setStrokingColor(200, 200, 200);
+ 
+                 contentStream.setLineWidth(1f);
+                 contentStream.setStrokingColor(new Color(200, 200, 200));
                 contentStream.moveTo(50, 740);
                 contentStream.lineTo(550, 740);
                 contentStream.stroke();

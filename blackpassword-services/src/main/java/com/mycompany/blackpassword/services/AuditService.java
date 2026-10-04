@@ -51,18 +51,24 @@ public class AuditService {
                 Firestore db = FirebaseService.getFirestore();
                 Map<String, Object> logEntry = new HashMap<>();
                 logEntry.put("timestamp", Timestamp.now());
-                logEntry.put("email_hash", RSALogica.hashToHex(fEmail));
+                logEntry.put("email_hash", RSALogica.hashConstantToHex(fEmail));
                 logEntry.put("accion", fAccion);
-                logEntry.put("os", System.getProperty("os.name"));
-
                 if (SecuritySession.isSessionActive() && SecuritySession.getPublicKey() != null) {
-                    byte[] enc = RSALogica.cifrarBytesHibrido(fDetalles.getBytes(StandardCharsets.UTF_8), SecuritySession.getPublicKey());
-                    logEntry.put("detalles_cifrados", Base64.getEncoder().encodeToString(enc));
+                    byte[] encDet = RSALogica.cifrarBytesHibrido(fDetalles.getBytes(StandardCharsets.UTF_8), SecuritySession.getPublicKey());
+                    logEntry.put("detalles_cifrados", Base64.getEncoder().encodeToString(encDet));
+                    
+                    byte[] encOs = RSALogica.cifrarBytesHibrido(System.getProperty("os.name").getBytes(StandardCharsets.UTF_8), SecuritySession.getPublicKey());
+                    logEntry.put("os_cifrado", Base64.getEncoder().encodeToString(encOs));
                 } else {
                     char[] chars = fDetalles.toCharArray();
+                    char[] charsOs = System.getProperty("os.name").toCharArray();
                     try {
-                        logEntry.put("detalles_ofuscados", RSALogica.hashSHA256(chars, RSALogica.getUniversalSalt()));
-                    } finally { Arrays.fill(chars, (char) 0); }
+                        logEntry.put("detalles_ofuscados", RSALogica.hashSHA256(chars, RSALogica.getUniversalSalt().getBytes(StandardCharsets.UTF_8)));
+                        logEntry.put("os_ofuscado", RSALogica.hashSHA256(charsOs, RSALogica.getUniversalSalt().getBytes(StandardCharsets.UTF_8)));
+                    } finally { 
+                        Arrays.fill(chars, (char) 0); 
+                        Arrays.fill(charsOs, (char) 0); 
+                    }
                 }
 
                 db.collection(COLLECTION_LOGS).add(logEntry).get();

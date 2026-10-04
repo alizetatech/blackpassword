@@ -47,7 +47,6 @@ public class DescifradorRsa extends javax.swing.JInternalFrame {
         jPanelCard.putClientProperty(FlatClientProperties.STYLE, "background: #FFFFFF; border: 0,0,0,0, #FFFFFF, 0, 20");
     }
 
-    @SuppressWarnings("unchecked")
     private void initComponents() {
 
         jPanelCard = new javax.swing.JPanel();

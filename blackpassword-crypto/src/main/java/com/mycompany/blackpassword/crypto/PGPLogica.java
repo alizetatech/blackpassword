@@ -36,6 +36,7 @@ public class PGPLogica {
         }
     }
 
+    @SuppressWarnings("deprecation")
     public static PGPKeyPairResult generatePGPKeyPair(String identity, char[] passphrase, int keySize) throws Exception {
         KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA", "BC");
         kpg.initialize(keySize);

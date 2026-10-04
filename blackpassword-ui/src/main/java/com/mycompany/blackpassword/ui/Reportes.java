@@ -9,10 +9,7 @@ import com.mycompany.blackpassword.services.IntrusionService;
 import com.mycompany.blackpassword.crypto.RSALogica;
 import com.mycompany.blackpassword.services.ReportService;
 import com.mycompany.blackpassword.services.SecuritySession;
-import com.mycompany.blackpassword.core.ToastNotification;
-import java.awt.BorderLayout;
-import java.awt.Color;
-import java.awt.FlowLayout;
+import com.mycompany.blackpassword.core.util.ToastNotification;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -20,13 +17,9 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import javax.swing.JButton;
 import javax.swing.JFileChooser;
 import javax.swing.JOptionPane;
-import javax.swing.JPanel;
 import javax.swing.JPasswordField;
-import javax.swing.JScrollPane;
-import javax.swing.JTable;
 import javax.swing.table.DefaultTableModel;
 
 /**
@@ -67,14 +60,15 @@ public class Reportes extends javax.swing.JInternalFrame {
 
         try {
             Firestore db = FirebaseService.getFirestore();
-            String emailHash = RSALogica.hashToHex(userEmail);
+            String emailHash = RSALogica.hashConstantToHex(userEmail);
             
             db.collection("audit_logs")
                 .whereEqualTo("email_hash", emailHash)
                 .orderBy("timestamp", Query.Direction.DESCENDING)
                 .limit(50)
                 .get().get().getDocuments().forEach(doc -> {
-                    String fecha = doc.getTimestamp("timestamp").toDate().toString();
+                    com.google.cloud.Timestamp ts = doc.getTimestamp("timestamp");
+                    String fecha = (ts != null) ? ts.toDate().toString() : "N/A";
                     String accion = doc.getString("accion");
                     String detalles = "N/A";
 
@@ -122,7 +116,6 @@ public class Reportes extends javax.swing.JInternalFrame {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private void initComponents() {
         jPanelCard = new javax.swing.JPanel();
         lblTitulo = new javax.swing.JLabel();
@@ -220,9 +213,12 @@ public class Reportes extends javax.swing.JInternalFrame {
                     List<Map<String, String>> data = new ArrayList<>();
                     for (int i = 0; i < jTable1.getRowCount(); i++) {
                         Map<String, String> row = new HashMap<>();
-                        row.put("fecha", jTable1.getValueAt(i, 0).toString());
-                        row.put("accion", jTable1.getValueAt(i, 1).toString());
-                        row.put("detalles", jTable1.getValueAt(i, 2).toString());
+                        Object vFecha = jTable1.getValueAt(i, 0);
+                        Object vAccion = jTable1.getValueAt(i, 1);
+                        Object vDetalles = jTable1.getValueAt(i, 2);
+                        row.put("fecha", vFecha != null ? vFecha.toString() : "");
+                        row.put("accion", vAccion != null ? vAccion.toString() : "");
+                        row.put("detalles", vDetalles != null ? vDetalles.toString() : "");
                         data.add(row);
                     }
                     ReportService.generarReporteAuditoria(userEmail, data, fc.getSelectedFile());

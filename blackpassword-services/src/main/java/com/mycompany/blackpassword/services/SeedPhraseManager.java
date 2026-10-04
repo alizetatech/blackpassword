@@ -3,7 +3,6 @@ package com.mycompany.blackpassword.services;
 import java.security.SecureRandom;
 import java.util.Arrays;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  * Generador de Frases Semilla (Mnemonic) para recuperación de cuenta.

@@ -3,17 +3,19 @@ package com.mycompany.blackpassword.ui;
 import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.google.api.core.ApiFuture;
+import com.google.cloud.Timestamp;
 import com.google.cloud.firestore.Firestore;
 import com.google.cloud.firestore.Query;
 import com.google.cloud.firestore.QueryDocumentSnapshot;
 import com.google.cloud.firestore.QuerySnapshot;
 import com.google.cloud.storage.Blob;
-import com.mycompany.blackpassword.services.AuditService;
 import com.mycompany.blackpassword.services.FirebaseService;
+import com.mycompany.blackpassword.services.AuditService;
 import com.mycompany.blackpassword.crypto.RSALogica;
+import com.mycompany.blackpassword.crypto.SecureCharArray;
 import com.mycompany.blackpassword.services.SecuritySession;
-import com.mycompany.blackpassword.core.ToastNotification;
-
+import com.mycompany.blackpassword.core.util.ToastNotification;
+import java.util.Objects;
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableRowSorter;
@@ -84,8 +86,7 @@ public class Imagenes extends javax.swing.JInternalFrame {
                 + "intercellSpacing: 0,1;"
                 + "selectionBackground: #E5F3FF;"
                 + "selectionForeground: #000000;"
-                + "showVerticalLines: false;"
-                + "arc: 12");
+                + "showVerticalLines: false");
         
         table.getTableHeader().putClientProperty(FlatClientProperties.STYLE, "font: bold; background: #F8F9FA; separatorColor: #E0E0E0");
 
@@ -99,7 +100,7 @@ public class Imagenes extends javax.swing.JInternalFrame {
 
         btnSubir.putClientProperty(FlatClientProperties.STYLE, "arc: 16; background: #0078D4; foreground: #FFFFFF; hoverBackground: #005A9E; borderWidth: 0; font: bold 14");
         
-        String actionStyle = "arc: 14; background: #F3F3F3; foreground: #333333; hoverBackground: #E5E5E5; borderWidth: 0; font: bold 12; textAlign: left; margin: 0,20,0,20";
+        String actionStyle = "arc: 14; background: #F3F3F3; foreground: #333333; hoverBackground: #E5E5E5; borderWidth: 0; font: bold 12; horizontalAlignment: left; margin: 0,20,0,20";
         btnVer.putClientProperty(FlatClientProperties.STYLE, actionStyle);
         btnEditar.putClientProperty(FlatClientProperties.STYLE, actionStyle);
         btnDescargar.putClientProperty(FlatClientProperties.STYLE, actionStyle);
@@ -120,7 +121,7 @@ public class Imagenes extends javax.swing.JInternalFrame {
     }
 
     private void initComponentsCustom() {
-        setLayout(new BorderLayout(0, 0));
+        getContentPane().setLayout(new BorderLayout(0, 0));
 
         // --- HEADER ---
         JPanel panelHeader = new JPanel(new BorderLayout());
@@ -144,7 +145,7 @@ public class Imagenes extends javax.swing.JInternalFrame {
         panelRightHeader.add(btnRefresh);
         panelHeader.add(panelRightHeader, BorderLayout.EAST);
         
-        add(panelHeader, BorderLayout.NORTH);
+        getContentPane().add(panelHeader, BorderLayout.NORTH);
 
         // --- SIDE PANEL (WEST) ---
         JPanel panelSide = new JPanel(new BorderLayout());
@@ -241,7 +242,7 @@ public class Imagenes extends javax.swing.JInternalFrame {
         sideScroll.setOpaque(false);
         sideScroll.getViewport().setOpaque(false);
         panelSide.add(sideScroll, BorderLayout.CENTER);
-        add(panelSide, BorderLayout.WEST);
+        getContentPane().add(panelSide, BorderLayout.WEST);
 
         // --- CENTER PANEL (TABLE) ---
         JPanel panelCenter = new JPanel(new BorderLayout(0, 15));
@@ -260,7 +261,7 @@ public class Imagenes extends javax.swing.JInternalFrame {
         scroll.setBorder(BorderFactory.createLineBorder(new Color(230, 230, 230)));
         panelCenter.add(scroll, BorderLayout.CENTER);
         
-        add(panelCenter, BorderLayout.CENTER);
+        getContentPane().add(panelCenter, BorderLayout.CENTER);
     }
 
     private void addLabeledField(JPanel p, String label, JTextField f, GridBagConstraints gbc, int row) {
@@ -289,8 +290,15 @@ public class Imagenes extends javax.swing.JInternalFrame {
         new Thread(() -> {
             try {
                 Firestore db = FirebaseService.getFirestore();
-                String path = RSALogica.hashToHex("usuarios") + "/" + RSALogica.hashToHex(userEmail) + "/imagenes";
-                ApiFuture<QuerySnapshot> future = db.collection(path).orderBy("timestamp", Query.Direction.DESCENDING).get();
+                char[] emailChars = userEmail.toCharArray();
+                char[] emailHashChars = RSALogica.hashToHex(emailChars, null);
+                String emailHash = new String(emailHashChars);
+                String path = RSALogica.hashConstantToHex("usuarios") + "/" + emailHash + "/imagenes";
+                SecureCharArray.clear(emailChars);
+                SecureCharArray.clear(emailHashChars);
+                
+                var collectionRef = db.collection(Objects.requireNonNull(path));
+                ApiFuture<QuerySnapshot> future = collectionRef.orderBy("timestamp", Query.Direction.DESCENDING).get();
                 for (QueryDocumentSnapshot doc : future.get().getDocuments()) {
                     String nombre = "[Error]", carpeta = "N/A";
                     try {
@@ -341,28 +349,36 @@ public class Imagenes extends javax.swing.JInternalFrame {
                 byte[] encMeta = RSALogica.cifrarBytesHibrido(metadata.getBytes(StandardCharsets.UTF_8), SecuritySession.getPublicKey());
                 Map<String, Object> docData = new HashMap<>();
                 docData.put("metadata_cifrada", Base64.getEncoder().encodeToString(encMeta));
-                docData.put("timestamp", com.google.cloud.Timestamp.now());
+                docData.put("timestamp", Timestamp.now());
 
                 Firestore db = FirebaseService.getFirestore();
-                String collectionPath = RSALogica.hashToHex("usuarios") + "/" + RSALogica.hashToHex(userEmail) + "/imagenes";
+                String collectionPath = getHashedUserPath();
 
                 if (idDocumentoEdicion == null) {
                     byte[] fileBytes = Files.readAllBytes(archivoSeleccionado.toPath());
                     byte[] encryptedBytes = RSALogica.cifrarBytesHibrido(fileBytes, SecuritySession.getPublicKey());
-                    String storagePath = "imagenes/" + RSALogica.hashToHex(userEmail) + "/" + UUID.randomUUID().toString();
+                    
+                    char[] emailChars = userEmail.toCharArray();
+                    char[] emailHashChars = RSALogica.hashToHex(emailChars, null);
+                    String storagePath = "imagenes/" + new String(emailHashChars) + "/" + UUID.randomUUID().toString();
+                    SecureCharArray.clear(emailChars);
+                    SecureCharArray.clear(emailHashChars);
+                    
                     FirebaseService.getStorageBucket().create(storagePath, encryptedBytes, "application/octet-stream");
                     docData.put("storage_path", storagePath);
-                    db.collection(collectionPath).add(docData).get();
+                    var docFuture = db.collection(Objects.requireNonNull(collectionPath)).add(docData);
+                    docFuture.get();
                 } else {
-                    db.collection(collectionPath).document(idDocumentoEdicion).update(docData).get();
+                    var updateFuture = db.collection(Objects.requireNonNull(collectionPath)).document(Objects.requireNonNull(idDocumentoEdicion)).update(docData);
+                    updateFuture.get();
                 }
                 
                 java.awt.EventQueue.invokeLater(() -> {
                     resetForm(); cargarImagenesDesdeFirebase();
-                    ToastNotification.show(this, "Imagen procesada", ToastNotification.Type.SUCCESS);
+                    ToastNotification.show(this, "Conexión establecida con éxito.", ToastNotification.Type.SUCCESS);
                 });
             } catch (Exception e) {
-                java.awt.EventQueue.invokeLater(() -> JOptionPane.showMessageDialog(this, "Error: " + e.getMessage()));
+                ToastNotification.show(this, "Error de red: " + e.getMessage(), ToastNotification.Type.ERROR);
             }
         }).start();
     }
@@ -373,8 +389,9 @@ public class Imagenes extends javax.swing.JInternalFrame {
         try {
             String docId = model.getValueAt(table.convertRowIndexToModel(fila), 2).toString();
             Firestore db = FirebaseService.getFirestore();
-            String path = RSALogica.hashToHex("usuarios") + "/" + RSALogica.hashToHex(userEmail) + "/imagenes";
-            var doc = db.collection(path).document(docId).get().get();
+            String path = getHashedUserPath();
+            var docFuture = db.collection(Objects.requireNonNull(path)).document(Objects.requireNonNull(docId)).get();
+            var doc = docFuture.get();
             if (doc.contains("metadata_cifrada")) {
                 byte[] dec = RSALogica.descifrarBytesHibrido(Base64.getDecoder().decode(doc.getString("metadata_cifrada")), SecuritySession.getPrivateKey());
                 String meta = new String(dec, StandardCharsets.UTF_8);
@@ -441,16 +458,30 @@ public class Imagenes extends javax.swing.JInternalFrame {
                 String docId = model.getValueAt(table.convertRowIndexToModel(fila), 2).toString();
                 String sp = getStoragePath(docId);
                 FirebaseService.getStorageBucket().get(sp).delete();
-                String coll = RSALogica.hashToHex("usuarios") + "/" + RSALogica.hashToHex(userEmail) + "/imagenes";
-                FirebaseService.getFirestore().collection(coll).document(docId).delete().get();
+                String coll = getHashedUserPath();
+                var deleteFuture = FirebaseService.getFirestore().collection(Objects.requireNonNull(coll)).document(Objects.requireNonNull(docId)).delete();
+                deleteFuture.get();
                 java.awt.EventQueue.invokeLater(() -> { cargarImagenesDesdeFirebase(); resetForm(); });
             } catch (Exception e) {}
         }).start();
     }
 
+    private String getHashedUserPath() throws Exception {
+        String colUsuarios = RSALogica.hashConstantToHex("usuarios");
+        char[] emailChars = userEmail.toCharArray();
+        char[] emailHashChars = RSALogica.hashToHex(emailChars, null);
+        String path = colUsuarios + "/" + new String(emailHashChars) + "/imagenes";
+        SecureCharArray.clear(emailChars);
+        SecureCharArray.clear(emailHashChars);
+        return path;
+    }
+
     private String getStoragePath(String docId) throws Exception {
-        String coll = RSALogica.hashToHex("usuarios") + "/" + RSALogica.hashToHex(userEmail) + "/imagenes";
-        return FirebaseService.getFirestore().collection(coll).document(docId).get().get().getString("storage_path");
+        String coll = getHashedUserPath();
+        var docFuture = FirebaseService.getFirestore().collection(Objects.requireNonNull(coll)).document(Objects.requireNonNull(docId)).get();
+        String path = docFuture.get().getString("storage_path");
+        if (path == null) throw new Exception("Ruta de almacenamiento no encontrada en el documento.");
+        return path;
     }
 
     private void resetForm() {

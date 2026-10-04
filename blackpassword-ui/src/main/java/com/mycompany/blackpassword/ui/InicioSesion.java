@@ -1,17 +1,11 @@
 package com.mycompany.blackpassword.ui;
 
 import com.formdev.flatlaf.FlatClientProperties;
-import com.google.cloud.firestore.DocumentSnapshot;
-import com.google.cloud.firestore.Firestore;
 import com.mycompany.blackpassword.services.AuditService;
 import com.mycompany.blackpassword.services.FirebaseService;
-import com.mycompany.blackpassword.services.IntrusionService;
 import com.mycompany.blackpassword.services.LocationService;
 import com.mycompany.blackpassword.crypto.RSALogica;
 import com.mycompany.blackpassword.services.SecuritySession;
-import com.mycompany.blackpassword.services.TypingDNAManager;
-import com.mycompany.blackpassword.services.VirtualKeyboard;
-import com.mycompany.blackpassword.services.LocationService;
 import com.mycompany.blackpassword.services.TypingDNAManager;
 import com.mycompany.blackpassword.services.VirtualKeyboard;
 import java.awt.event.KeyAdapter;
@@ -20,8 +14,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import javax.swing.JOptionPane;
 import javax.swing.JPasswordField;
 import javax.swing.SwingConstants;
@@ -79,7 +73,6 @@ public class InicioSesion extends javax.swing.JInternalFrame {
         });
     }
 
-    @SuppressWarnings("unchecked")
     private void initComponents() {
         jPanelCard = new javax.swing.JPanel();
         jLabel3 = new javax.swing.JLabel();
@@ -171,95 +164,144 @@ public class InicioSesion extends javax.swing.JInternalFrame {
         if (correo.isEmpty() || pass.length == 0) return;
 
         try {
-            Firestore db = FirebaseService.getFirestore();
-            String docId = RSALogica.hashToHex(correo);
-            DocumentSnapshot userDoc = db.collection(RSALogica.hashToHex("usuarios")).document(docId).get().get();
+            com.google.cloud.firestore.Firestore db = com.mycompany.blackpassword.services.FirebaseService.getFirestore();
+            
+            // Migración Nivel 11: Uso de constantes seguras para infraestructura
+            String colName = com.mycompany.blackpassword.crypto.RSALogica.hashConstantToHex("usuarios");
+            String docId = com.mycompany.blackpassword.crypto.RSALogica.hashConstantToHex(correo);
+
+            // --- MOTOR DE BÚSQUEDA DE IDENTIDAD ROBUSTO (4-Way Intersection) ---
+            com.google.cloud.firestore.DocumentReference userRef = db.collection(Objects.requireNonNull(colName)).document(Objects.requireNonNull(docId));
+            com.google.cloud.firestore.DocumentSnapshot userDoc = userRef.get().get();
             
             if (!userDoc.exists()) {
-                JOptionPane.showMessageDialog(this, "❌ Usuario no encontrado.", "Error", JOptionPane.ERROR_MESSAGE);
+                // Caso 1: Colección Moderna, ID Legacy
+                userRef = db.collection(Objects.requireNonNull(colName)).document(Objects.requireNonNull(docId.toUpperCase()));
+                userDoc = userRef.get().get();
+                
+                if (!userDoc.exists()) {
+                    // Caso 2: Colección Legacy, ID Moderno
+                    String colLegacy = Objects.requireNonNull(colName.toUpperCase());
+                    userRef = db.collection(Objects.requireNonNull(colLegacy)).document(Objects.requireNonNull(docId));
+                    userDoc = userRef.get().get();
+                    
+                    if (!userDoc.exists()) {
+                        // Caso 3: Colección Legacy, ID Legacy
+                        userRef = db.collection(Objects.requireNonNull(colLegacy)).document(Objects.requireNonNull(docId.toUpperCase()));
+                        userDoc = userRef.get().get();
+                    }
+                }
+            }
+
+            // Purga integrada de buffers (Gestionada por hashConstantToHex)
+
+            if (!userDoc.exists()) {
+                JOptionPane.showMessageDialog(this, "❌ Usuario no encontrado.\nVerifique su conexión o espere 15 segundos.", "Error de Identidad", JOptionPane.ERROR_MESSAGE);
                 return;
             }
 
-            String pinHash = userDoc.getString("codigopin");
+            // --- EXTRACCIÓN DE ATRIBUTOS DE IDENTIDAD ---
+            String pinHash = userDoc.getString("pin_hash");
+            if (pinHash == null) pinHash = userDoc.getString("codigopin");
+            
             String dbUidHash = userDoc.getString("uid_hash");
             String storedTypingProfile = userDoc.getString("typing_profile");
-            String lastLocation = userDoc.getString("last_location");
-
-            if (pinHash == null || pinHash.isEmpty()) {
-                JOptionPane.showMessageDialog(this, "❌ Perfil de usuario corrupto.", "Error de Seguridad", JOptionPane.ERROR_MESSAGE);
+            String lastLocation = "N/A";
+            if (userDoc.contains("last_location_cifrada")) {
+                try {
+                    byte[] encLoc = Base64.getDecoder().decode(userDoc.getString("last_location_cifrada"));
+                    lastLocation = new String(RSALogica.descifrarBytesHibrido(encLoc, SecuritySession.getPrivateKey()), StandardCharsets.UTF_8);
+                } catch (Exception e) {}
+            } else {
+                String ll = userDoc.getString("last_location");
+                if (ll != null) {
+                    lastLocation = ll;
+                }
+            }
+            
+            if (pinHash == null || pinHash.isEmpty() || dbUidHash == null) {
+                JOptionPane.showMessageDialog(this, "❌ Perfil de usuario incompleto o corrupto.", "Error de Integridad", JOptionPane.ERROR_MESSAGE);
                 return;
             }
 
             byte[] perfilCifrado = Base64.getDecoder().decode(userDoc.getString("perfil_cifrado"));
             byte[] perfilDescifradoBytes = RSALogica.descifrarBytesHibrido(perfilCifrado, SecuritySession.getPrivateKey());
-            String perfilDescifrado = new String(perfilDescifradoBytes, StandardCharsets.UTF_8);
             
             String storedHash = "", nombre = "Usuario";
-            for (String parte : perfilDescifrado.split("\\|")) {
-                if (parte.startsWith("hash:")) storedHash = parte.substring(5);
-                if (parte.startsWith("nombre:")) nombre = parte.substring(7);
+            int start = 0;
+            for (int i = 0; i <= perfilDescifradoBytes.length; i++) {
+                if (i == perfilDescifradoBytes.length || perfilDescifradoBytes[i] == '|') {
+                    int len = i - start;
+                    if (len > 0) {
+                        String segment = new String(perfilDescifradoBytes, start, len).trim();
+                        if (segment.startsWith("hash:")) storedHash = segment.substring(5);
+                        if (segment.startsWith("nombre:")) nombre = segment.substring(7);
+                    }
+                    start = i + 1;
+                }
             }
             
-            String hashPassConSal = RSALogica.hashSHA256(pass, RSALogica.getUniversalSalt());
-            String hashPassSinSal = RSALogica.hashSHA256(pass, null);
+            Arrays.fill(perfilDescifradoBytes, (byte) 0);
+            
+            String userSaltBase64 = userDoc.getString("user_salt");
+            byte[] userSalt = (userSaltBase64 != null) ? Base64.getDecoder().decode(userSaltBase64) : null;
 
-            if (hashPassConSal.equals(storedHash) || hashPassSinSal.equals(storedHash)) {
+            String hashPass;
+            if (userSalt != null) {
+                hashPass = RSALogica.hashSHA256(pass, userSalt);
+            } else {
+                hashPass = RSALogica.hashSHA256(pass, RSALogica.getUniversalSalt().getBytes(StandardCharsets.UTF_8));
+            }
+
+            byte[] computedPassBytes = hashPass.toLowerCase().getBytes(StandardCharsets.UTF_8);
+            byte[] storedPassBytes = storedHash.toLowerCase().getBytes(StandardCharsets.UTF_8);
+
+            if (java.security.MessageDigest.isEqual(computedPassBytes, storedPassBytes)) {
+                SecuritySession.setUserSalt(userSalt); 
                 
-                // --- VALIDACIÓN BIOMÉTRICA CONDUCTUAL (TYPING DNA) ---
                 String currentProfile = typingDNA.getTypingProfile();
                 double similarity = TypingDNAManager.compareProfiles(currentProfile, storedTypingProfile);
                 
                 System.out.println("[TypingDNA] Similitud detectada: " + String.format("%.2f", similarity) + "%");
                 
-                // Si la similitud es baja (< 20%), pedimos el PIN como rescate y actualizamos el perfil
-                if (similarity < 20.0 && !currentProfile.equals("INSUFFICIENT_DATA")) {
+                if (similarity < 15.0 && !currentProfile.equals("INSUFFICIENT_DATA")) {
                     JPasswordField pfPin = new JPasswordField(4);
-                    Object[] msg = {
-                        "🛡️ VERIFICACIÓN DE SEGURIDAD ADICIONAL\n" +
-                        "Se ha detectado un cambio en su entorno de tecleo.\n" +
-                        "Por favor, confirme su identidad con su PIN de 4 dígitos:", 
-                        pfPin
-                    };
+                    Object[] msg = {"🛡️ VERIFICACIÓN BIOMÉTRICA FALLIDA\nConfirme con su PIN:", pfPin};
                     
-                    int opt = JOptionPane.showConfirmDialog(this, msg, "Protección de Identidad", JOptionPane.OK_CANCEL_OPTION, JOptionPane.INFORMATION_MESSAGE);
-                    
-                    if (opt == JOptionPane.OK_OPTION) {
-                        String hashPinConSal = RSALogica.hashSHA256(pfPin.getPassword(), RSALogica.getUniversalSalt());
-                        String hashPinSinSal = RSALogica.hashSHA256(pfPin.getPassword(), null);
+                    if (JOptionPane.showConfirmDialog(this, msg, "Seguridad", JOptionPane.OK_CANCEL_OPTION) == JOptionPane.OK_OPTION) {
+                        String hashPin = (userSalt != null) ? RSALogica.hashSHA256(pfPin.getPassword(), userSalt) : RSALogica.hashSHA256(pfPin.getPassword(), RSALogica.getUniversalSalt().getBytes(StandardCharsets.UTF_8));
+                        byte[] computedPinBytes = hashPin.toLowerCase().getBytes(StandardCharsets.UTF_8);
+                        byte[] storedPinBytes = pinHash.toLowerCase().getBytes(StandardCharsets.UTF_8);
                         
-                        if (hashPinConSal.equals(pinHash) || hashPinSinSal.equals(pinHash)) {
-                            AuditService.log(correo, "BIOMETRIC_LEARNING", "Perfil biométrico actualizado tras validación por PIN.");
-                            // APRENDIZAJE ACTIVO: Actualizamos el perfil en la nube con el nuevo ritmo
-                            db.collection(RSALogica.hashToHex("usuarios")).document(docId).update("typing_profile", currentProfile);
-                        } else {
-                            IntrusionService.reportFailure(correo, "TYPING_DNA_PIN_FAILURE");
-                            JOptionPane.showMessageDialog(this, "PIN incorrecto. Acceso denegado.", "Error de Seguridad", JOptionPane.ERROR_MESSAGE);
+                        if (!java.security.MessageDigest.isEqual(computedPinBytes, storedPinBytes)) {
+                            JOptionPane.showMessageDialog(this, "PIN incorrecto.", "Error", JOptionPane.ERROR_MESSAGE);
                             return;
                         }
-                    } else {
-                        return;
-                    }
+                        db.collection(Objects.requireNonNull(RSALogica.hashConstantToHex("usuarios"))).document(Objects.requireNonNull(docId)).update("typing_profile", currentProfile);
+                    } else return;
                 }
 
                 // --- RASTREO DE UBICACIÓN SEGURA ---
                 String currentLocation = LocationService.getLocationString();
                 SecuritySession.setCurrentLocation(currentLocation);
                 
-                if (lastLocation != null && !lastLocation.equals("N/A") && !currentLocation.equals(lastLocation)) {
-                    AuditService.log(correo, "LOCATION_CHANGE", "Cambio de ubicación detectado. Anterior: " + lastLocation + " | Actual: " + currentLocation);
+                if (!lastLocation.equals("N/A") && !currentLocation.equals(lastLocation)) {
+                    AuditService.log(correo, "LOCATION_CHANGE", "Anterior: " + lastLocation + " | Actual: " + currentLocation);
                 }
 
-                // Actualizar última ubicación en Firestore
                 Map<String, Object> updates = new HashMap<>();
-                updates.put("last_location", currentLocation);
+                byte[] encLoc = RSALogica.cifrarBytesHibrido(currentLocation.getBytes(StandardCharsets.UTF_8), SecuritySession.getPublicKey());
+                updates.put("last_location_cifrada", Base64.getEncoder().encodeToString(encLoc));
                 updates.put("last_login", com.google.cloud.Timestamp.now());
-                db.collection(RSALogica.hashToHex("usuarios")).document(docId).update(updates);
+                db.collection(Objects.requireNonNull(RSALogica.hashConstantToHex("usuarios"))).document(Objects.requireNonNull(docId)).update(updates);
 
                 SecuritySession.setUserPinHash(pinHash);
                 SecuritySession.setLocalUidHash(dbUidHash);
                 SecuritySession.setTypingProfile(currentProfile.equals("INSUFFICIENT_DATA") ? storedTypingProfile : currentProfile);
+                
+                SecuritySession.setMasterPassword(pass); 
                 SecuritySession.setKeySession(SecuritySession.getPublicKey(), SecuritySession.getPrivateKey(), pass);
-                SecuritySession.setMasterPassword(pass.clone());
+                // (Nota: setKeySession ya limpia 'pass', pero lo reforzamos en el finally de este método)
                 
                 try {
                     Map<String, Object> claims = FirebaseService.getCustomClaims(correo);

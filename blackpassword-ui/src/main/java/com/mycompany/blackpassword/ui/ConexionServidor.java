@@ -1,12 +1,9 @@
 package com.mycompany.blackpassword.ui;
 
-import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.mycompany.blackpassword.services.ServerService;
-import com.mycompany.blackpassword.core.ToastNotification;
-import com.mycompany.blackpassword.services.ServerService;
+import com.mycompany.blackpassword.core.util.ToastNotification;
 import javax.swing.*;
 import java.awt.*;
-import java.io.IOException;
 
 /**
  * Interfaz de conexión con la Fortaleza Digital.
@@ -27,9 +24,13 @@ public class ConexionServidor extends JInternalFrame {
     }
 
     private void initComponents() {
-        txtUsuario = new JTextField("admin_fortaleza", 20);
-        txtPassword = new JPasswordField("clave_maestra_2026", 20);
-        txtUrl = new JTextField("http://localhost:8080/fortaleza/api/v1", 20);
+        txtUsuario = new JTextField(System.getenv("FORTALEZA_USER") != null ? System.getenv("FORTALEZA_USER") : "", 20);
+        txtPassword = new JPasswordField(20);
+        String envPass = System.getenv("FORTALEZA_PASS");
+        if (envPass != null) {
+            txtPassword.setText(envPass);
+        }
+        txtUrl = new JTextField(System.getenv("FORTALEZA_URL") != null ? System.getenv("FORTALEZA_URL") : "http://localhost:8080/fortaleza/api/v1", 20);
         btnConectar = new JButton("Establecer Enlace Seguro");
         btnRegistrar = new JButton("Registrar Nuevo Agente");
         lblEstado = new JLabel("Estado: Desconectado", SwingConstants.CENTER);
@@ -85,8 +86,14 @@ public class ConexionServidor extends JInternalFrame {
 
     private void conectar() {
         String user = txtUsuario.getText();
-        String pass = new String(txtPassword.getPassword());
+        char[] passwordChars = txtPassword.getPassword();
         String url = txtUrl.getText();
+
+        if (user.isEmpty() || passwordChars.length == 0) {
+            ToastNotification.show(this, "Usuario y contraseña son requeridos", ToastNotification.Type.WARNING);
+            java.util.Arrays.fill(passwordChars, (char) 0);
+            return;
+        }
 
         btnConectar.setEnabled(false);
         lblEstado.setText("Estableciendo enlace...");
@@ -97,7 +104,8 @@ public class ConexionServidor extends JInternalFrame {
             protected Boolean doInBackground() throws Exception {
                 ServerService service = ServerService.getInstance();
                 service.setBaseUrl(url);
-                return service.login(user, pass);
+                boolean result = service.login(user, passwordChars);
+                return result;
             }
 
             @Override
@@ -118,6 +126,7 @@ public class ConexionServidor extends JInternalFrame {
                     ToastNotification.show(ConexionServidor.this, "Fallo de conexión con GlassFish", ToastNotification.Type.ERROR);
                 } finally {
                     btnConectar.setEnabled(true);
+                    java.util.Arrays.fill(passwordChars, (char) 0);
                 }
             }
         }.execute();
@@ -125,11 +134,12 @@ public class ConexionServidor extends JInternalFrame {
 
     private void registrar() {
         String user = txtUsuario.getText();
-        String pass = new String(txtPassword.getPassword());
+        char[] passwordChars = txtPassword.getPassword();
         String url = txtUrl.getText();
 
-        if (user.length() < 4 || pass.length() < 8) {
+        if (user.length() < 4 || passwordChars.length < 8) {
             ToastNotification.show(this, "Usuario (min 4) o Clave (min 8) muy cortos", ToastNotification.Type.WARNING);
+            java.util.Arrays.fill(passwordChars, (char) 0);
             return;
         }
 
@@ -141,7 +151,7 @@ public class ConexionServidor extends JInternalFrame {
             protected Boolean doInBackground() throws Exception {
                 ServerService service = ServerService.getInstance();
                 service.setBaseUrl(url);
-                return service.register(user, pass);
+                return service.register(user, passwordChars);
             }
 
             @Override
@@ -161,6 +171,7 @@ public class ConexionServidor extends JInternalFrame {
                     ToastNotification.show(ConexionServidor.this, "Servidor fuera de línea", ToastNotification.Type.ERROR);
                 } finally {
                     btnRegistrar.setEnabled(true);
+                    java.util.Arrays.fill(passwordChars, (char) 0);
                 }
             }
         }.execute();

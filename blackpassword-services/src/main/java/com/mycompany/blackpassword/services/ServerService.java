@@ -6,12 +6,19 @@ import com.google.gson.JsonObject;
 import okhttp3.*;
 import javax.net.ssl.*;
 import java.io.IOException;
-import java.security.cert.CertificateException;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Base64;
 import java.util.concurrent.TimeUnit;
 
 /**
  * Servicio de enlace con la Fortaleza Digital (EncryptedCompanyServer).
  * Adaptado para despliegue en GlassFish (Puerto 8080 / Context: fortaleza).
+ * 
+ * SEGURIDAD: Los métodos que aceptan passwords usan char[] para evitar
+ * que las contraseñas permanezcan en String Pool.
  */
 public class ServerService {
 
@@ -23,7 +30,7 @@ public class ServerService {
 
     private ServerService() {
         this.gson = new Gson();
-        this.client = createUnsafeOkHttpClient();
+        this.client = createSecureOkHttpClient();
     }
 
     public static synchronized ServerService getInstance() {
@@ -33,10 +40,30 @@ public class ServerService {
         return instance;
     }
 
+    /**
+     * Login seguro usando char[] para la contraseña.
+     * La contraseña se limpia después de ser usada.
+     */
+    public boolean login(String username, char[] password) throws IOException {
+        byte[] passwordBytes = toBytes(password);
+        Arrays.fill(password, (char) 0);
+        
+        try {
+            return loginInternal(username, passwordBytes);
+        } finally {
+            Arrays.fill(passwordBytes, (byte) 0);
+        }
+    }
+
+    @Deprecated
     public boolean login(String username, String password) throws IOException {
+        return login(username, password.toCharArray());
+    }
+
+    private boolean loginInternal(String username, byte[] passwordHash) throws IOException {
         JsonObject loginJson = new JsonObject();
         loginJson.addProperty("username", username);
-        loginJson.addProperty("password", password);
+        loginJson.addProperty("password_hash", Base64.getEncoder().encodeToString(passwordHash));
 
         RequestBody body = RequestBody.create(
                 loginJson.toString(),
@@ -58,10 +85,30 @@ public class ServerService {
         }
     }
 
+    /**
+     * Registro seguro usando char[] para la contraseña.
+     * La contraseña se limpia después de ser usada.
+     */
+    public boolean register(String username, char[] password) throws IOException {
+        byte[] passwordBytes = toBytes(password);
+        Arrays.fill(password, (char) 0);
+        
+        try {
+            return registerInternal(username, passwordBytes);
+        } finally {
+            Arrays.fill(passwordBytes, (byte) 0);
+        }
+    }
+
+    @Deprecated
     public boolean register(String username, String password) throws IOException {
+        return register(username, password.toCharArray());
+    }
+
+    private boolean registerInternal(String username, byte[] passwordHash) throws IOException {
         JsonObject regJson = new JsonObject();
         regJson.addProperty("username", username);
-        regJson.addProperty("password", password);
+        regJson.addProperty("password_hash", Base64.getEncoder().encodeToString(passwordHash));
 
         RequestBody body = RequestBody.create(
                 regJson.toString(),
@@ -76,6 +123,14 @@ public class ServerService {
         try (Response response = client.newCall(request).execute()) {
             return response.isSuccessful();
         }
+    }
+
+    private byte[] toBytes(char[] chars) {
+        CharBuffer cb = CharBuffer.wrap(chars);
+        ByteBuffer bb = StandardCharsets.UTF_8.encode(cb);
+        byte[] result = Arrays.copyOfRange(bb.array(), bb.position(), bb.limit());
+        Arrays.fill(bb.array(), (byte) 0);
+        return result;
     }
 
     public boolean storeSecret(String identifier, String content, String description) throws IOException {
@@ -119,26 +174,20 @@ public class ServerService {
         }
     }
 
-    private OkHttpClient createUnsafeOkHttpClient() {
+    private OkHttpClient createSecureOkHttpClient() {
         try {
-            final TrustManager[] trustAllCerts = new TrustManager[]{
-                new X509TrustManager() {
-                    @Override public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType) throws CertificateException {}
-                    @Override public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType) throws CertificateException {}
-                    @Override public java.security.cert.X509Certificate[] getAcceptedIssuers() { return new java.security.cert.X509Certificate[]{}; }
-                }
-            };
-
-            final SSLContext sslContext = SSLContext.getInstance("TLSv1.3");
-            sslContext.init(null, trustAllCerts, new java.security.SecureRandom());
+            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init((java.security.KeyStore) null);
+            
+            SSLContext sslContext = SSLContext.getInstance("TLSv1.3");
+            sslContext.init(null, tmf.getTrustManagers(), new java.security.SecureRandom());
             
             return new OkHttpClient.Builder()
-                    .sslSocketFactory(sslContext.getSocketFactory(), (X509TrustManager) trustAllCerts[0])
-                    .hostnameVerifier((hostname, session) -> true)
+                    .sslSocketFactory(sslContext.getSocketFactory(), (X509TrustManager) tmf.getTrustManagers()[0])
                     .connectTimeout(10, TimeUnit.SECONDS)
                     .build();
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            throw new RuntimeException("Failed to create secure HTTP client", e);
         }
     }
 

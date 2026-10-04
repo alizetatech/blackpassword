@@ -7,7 +7,7 @@ import com.mycompany.blackpassword.services.AuditService;
 import com.mycompany.blackpassword.services.FirebaseService;
 import com.mycompany.blackpassword.crypto.RSALogica;
 import com.mycompany.blackpassword.services.SecuritySession;
-import com.mycompany.blackpassword.core.ToastNotification;
+import com.mycompany.blackpassword.core.util.ToastNotification;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
@@ -72,8 +72,7 @@ public class Archivos extends javax.swing.JInternalFrame {
                 + "intercellSpacing: 0,1;"
                 + "selectionBackground: #E5F3FF;"
                 + "selectionForeground: #000000;"
-                + "showVerticalLines: false;"
-                + "arc: 12");
+                + "showVerticalLines: false");
         
         table.getTableHeader().putClientProperty(FlatClientProperties.STYLE, "font: bold; background: #F8F9FA; separatorColor: #E0E0E0");
 
@@ -89,7 +88,7 @@ public class Archivos extends javax.swing.JInternalFrame {
 
         btnSubir.putClientProperty(FlatClientProperties.STYLE, "arc: 16; background: #0078D4; foreground: #FFFFFF; hoverBackground: #005A9E; borderWidth: 0; font: bold 14");
         
-        String actionStyle = "arc: 14; background: #F3F3F3; foreground: #333333; hoverBackground: #E5E5E5; borderWidth: 0; font: bold 12; textAlign: left; margin: 0,20,0,20";
+        String actionStyle = "arc: 14; background: #F3F3F3; foreground: #333333; hoverBackground: #E5E5E5; borderWidth: 0; font: bold 12; horizontalAlignment: left; margin: 0,20,0,20";
         btnEditar.putClientProperty(FlatClientProperties.STYLE, actionStyle);
         btnDescargar.putClientProperty(FlatClientProperties.STYLE, actionStyle);
         btnEliminar.putClientProperty(FlatClientProperties.STYLE, actionStyle + "; foreground: #D83B01; hoverBackground: #FDE7E9");
@@ -108,7 +107,7 @@ public class Archivos extends javax.swing.JInternalFrame {
     }
 
     private void initComponentsCustom() {
-        setLayout(new BorderLayout(0, 0));
+        getContentPane().setLayout(new BorderLayout(0, 0));
 
         // --- HEADER ---
         JPanel panelHeader = new JPanel(new BorderLayout());
@@ -132,7 +131,7 @@ public class Archivos extends javax.swing.JInternalFrame {
         panelRightHeader.add(btnRefresh);
         panelHeader.add(panelRightHeader, BorderLayout.EAST);
         
-        add(panelHeader, BorderLayout.NORTH);
+        getContentPane().add(panelHeader, BorderLayout.NORTH);
 
         // --- SIDE PANEL (WEST) ---
         JPanel panelSide = new JPanel(new BorderLayout());
@@ -218,7 +217,7 @@ public class Archivos extends javax.swing.JInternalFrame {
         sideScroll.setOpaque(false);
         sideScroll.getViewport().setOpaque(false);
         panelSide.add(sideScroll, BorderLayout.CENTER);
-        add(panelSide, BorderLayout.WEST);
+        getContentPane().add(panelSide, BorderLayout.WEST);
 
         // --- CENTER PANEL (TABLE) ---
         JPanel panelCenter = new JPanel(new BorderLayout(0, 15));
@@ -237,7 +236,7 @@ public class Archivos extends javax.swing.JInternalFrame {
         scroll.setBorder(BorderFactory.createLineBorder(new Color(230, 230, 230)));
         panelCenter.add(scroll, BorderLayout.CENTER);
         
-        add(panelCenter, BorderLayout.CENTER);
+        getContentPane().add(panelCenter, BorderLayout.CENTER);
     }
 
     private void addLabeledField(JPanel p, String label, JTextField f, GridBagConstraints gbc, int row) {
@@ -266,7 +265,13 @@ public class Archivos extends javax.swing.JInternalFrame {
         new Thread(() -> {
             try {
                 Firestore db = FirebaseService.getFirestore();
-                String path = RSALogica.hashToHex("usuarios") + "/" + RSALogica.hashToHex(userEmail) + "/" + RSALogica.hashToHex("archivos");
+                char[] emailChars = userEmail.toCharArray();
+                char[] hashChars = RSALogica.hashToHex(emailChars, null);
+                String emailHash = new String(hashChars);
+                com.mycompany.blackpassword.crypto.SecureCharArray.clear(emailChars);
+                com.mycompany.blackpassword.crypto.SecureCharArray.clear(hashChars);
+                
+                String path = RSALogica.hashConstantToHex("usuarios") + "/" + emailHash + "/" + RSALogica.hashConstantToHex("archivos");
                 
                 db.collection(path).get().get().getDocuments().forEach(doc -> {
                     String nombre = "N/A", carpeta = "N/A", fecha = "N/A";
@@ -279,7 +284,8 @@ public class Archivos extends javax.swing.JInternalFrame {
                                 if (p.startsWith("c:")) carpeta = p.substring(2);
                             }
                         }
-                        fecha = doc.getCreateTime() != null ? doc.getCreateTime().toDate().toString() : "N/A";
+                        com.google.cloud.Timestamp createTime = doc.getCreateTime();
+                        fecha = createTime != null ? createTime.toDate().toString() : "N/A";
                     } catch (Exception e) { nombre = "[Error]"; }
 
                     String finalN = nombre, finalC = carpeta, finalF = fecha;
@@ -308,11 +314,17 @@ public class Archivos extends javax.swing.JInternalFrame {
         String nombre = txtNombre.getText().trim();
         String carpeta = txtCarpeta.getText().trim();
         if (nombre.isEmpty()) return;
-
         new Thread(() -> {
             try {
-                Firestore db = FirebaseService.getFirestore();
-                String path = RSALogica.hashToHex("usuarios") + "/" + RSALogica.hashToHex(userEmail) + "/" + RSALogica.hashToHex("archivos");
+                final Firestore db = java.util.Objects.requireNonNull(FirebaseService.getFirestore());
+                
+                char[] emailChars = userEmail.toCharArray();
+                char[] hashChars = RSALogica.hashToHex(emailChars, null);
+                String emailHash = new String(hashChars);
+                com.mycompany.blackpassword.crypto.SecureCharArray.clear(emailChars);
+                com.mycompany.blackpassword.crypto.SecureCharArray.clear(hashChars);
+                
+                final String path = RSALogica.hashConstantToHex("usuarios") + "/" + emailHash + "/" + RSALogica.hashConstantToHex("archivos");
                 String metadata = "n:" + nombre + "|c:" + carpeta + "|r:" + txtRecordatorio.getText();
                 byte[] encMeta = RSALogica.cifrarBytesHibrido(metadata.getBytes(StandardCharsets.UTF_8), SecuritySession.getPublicKey());
                 
@@ -322,10 +334,11 @@ public class Archivos extends javax.swing.JInternalFrame {
                 if (idDocumentoEdicion == null) {
                     if (archivoSeleccionado == null) return;
                     byte[] encBytes = RSALogica.cifrarBytesHibrido(Files.readAllBytes(archivoSeleccionado.toPath()), SecuritySession.getPublicKey());
-                    data.put("contenido_cifrado", Base64.getEncoder().encodeToString(encBytes));
+                    data.put("contenido_cifrado", Base64.getEncoder().encodeToString(java.util.Objects.requireNonNull(encBytes)));
                     db.collection(path).add(data).get();
                 } else {
-                    db.collection(path).document(idDocumentoEdicion).update(data).get();
+                    final String safeId = java.util.Objects.requireNonNull(idDocumentoEdicion);
+                    db.collection(path).document(safeId).update(data).get();
                 }
                 
                 java.awt.EventQueue.invokeLater(() -> {
@@ -344,8 +357,15 @@ public class Archivos extends javax.swing.JInternalFrame {
         try {
             String docId = model.getValueAt(table.convertRowIndexToModel(fila), 3).toString();
             Firestore db = FirebaseService.getFirestore();
-            String path = RSALogica.hashToHex("usuarios") + "/" + RSALogica.hashToHex(userEmail) + "/" + RSALogica.hashToHex("archivos");
-            var doc = db.collection(path).document(docId).get().get();
+            
+            char[] emailChars = userEmail.toCharArray();
+            char[] hashChars = RSALogica.hashToHex(emailChars, null);
+            String emailHash = new String(hashChars);
+            com.mycompany.blackpassword.crypto.SecureCharArray.clear(emailChars);
+            com.mycompany.blackpassword.crypto.SecureCharArray.clear(hashChars);
+            
+            String path = RSALogica.hashConstantToHex("usuarios") + "/" + emailHash + "/" + RSALogica.hashConstantToHex("archivos");
+            var doc = db.collection(java.util.Objects.requireNonNull(path)).document(java.util.Objects.requireNonNull(docId)).get().get();
             
             if (doc.contains("metadata_cifrada")) {
                 byte[] dec = RSALogica.descifrarBytesHibrido(Base64.getDecoder().decode(doc.getString("metadata_cifrada")), SecuritySession.getPrivateKey());
@@ -372,8 +392,16 @@ public class Archivos extends javax.swing.JInternalFrame {
                 new Thread(() -> {
                     try {
                         String docId = model.getValueAt(table.convertRowIndexToModel(fila), 3).toString();
-                        String path = RSALogica.hashToHex("usuarios") + "/" + RSALogica.hashToHex(userEmail) + "/" + RSALogica.hashToHex("archivos");
-                        var doc = FirebaseService.getFirestore().collection(path).document(docId).get().get();
+                        
+                        char[] emailChars = userEmail.toCharArray();
+                        char[] hashChars = RSALogica.hashToHex(emailChars, null);
+                        String emailHash = new String(hashChars);
+                        com.mycompany.blackpassword.crypto.SecureCharArray.clear(emailChars);
+                        com.mycompany.blackpassword.crypto.SecureCharArray.clear(hashChars);
+                        
+                        String path = RSALogica.hashConstantToHex("usuarios") + "/" + emailHash + "/" + RSALogica.hashConstantToHex("archivos");
+                        var doc = FirebaseService.getFirestore().collection(java.util.Objects.requireNonNull(path))
+                                .document(java.util.Objects.requireNonNull(docId)).get().get();
                         byte[] dec = RSALogica.descifrarBytesHibrido(Base64.getDecoder().decode(doc.getString("contenido_cifrado")), SecuritySession.getPrivateKey());
                         
                         java.awt.EventQueue.invokeLater(() -> {
@@ -400,8 +428,16 @@ public class Archivos extends javax.swing.JInternalFrame {
         new Thread(() -> {
             try {
                 String docId = model.getValueAt(table.convertRowIndexToModel(fila), 3).toString();
-                String path = RSALogica.hashToHex("usuarios") + "/" + RSALogica.hashToHex(userEmail) + "/" + RSALogica.hashToHex("archivos");
-                FirebaseService.getFirestore().collection(path).document(docId).delete().get();
+                
+                char[] emailChars = userEmail.toCharArray();
+                char[] hashChars = RSALogica.hashToHex(emailChars, null);
+                String emailHash = new String(hashChars);
+                com.mycompany.blackpassword.crypto.SecureCharArray.clear(emailChars);
+                com.mycompany.blackpassword.crypto.SecureCharArray.clear(hashChars);
+                
+                String path = RSALogica.hashConstantToHex("usuarios") + "/" + emailHash + "/" + RSALogica.hashConstantToHex("archivos");
+                var deleteFuture = FirebaseService.getFirestore().collection(java.util.Objects.requireNonNull(path)).document(java.util.Objects.requireNonNull(docId)).delete();
+                deleteFuture.get();
                 java.awt.EventQueue.invokeLater(() -> {
                     cargarArchivosDesdeFirebase();
                     resetForm();

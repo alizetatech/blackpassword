@@ -5,3 +5,8 @@
 blackvault_local.db
 blackvault_local.db.enc
 /target/
+*.log
+*.bak
+tmp/
+META-INF/
+run_diag.bat

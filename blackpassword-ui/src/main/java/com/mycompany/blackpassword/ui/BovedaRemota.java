@@ -4,11 +4,10 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.mycompany.blackpassword.services.ServerService;
-import com.mycompany.blackpassword.core.ToastNotification;
+import com.mycompany.blackpassword.core.util.ToastNotification;
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
-import java.io.IOException;
 
 /**
  * Visor de la Bóveda Remota (Fortaleza Digital).

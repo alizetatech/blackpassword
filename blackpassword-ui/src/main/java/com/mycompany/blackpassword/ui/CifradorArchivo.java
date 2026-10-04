@@ -4,10 +4,8 @@ import com.formdev.flatlaf.FlatClientProperties;
 import com.mycompany.blackpassword.services.AuditService;
 import com.mycompany.blackpassword.crypto.CifradorLogica;
 import com.mycompany.blackpassword.services.SecuritySession;
-import com.mycompany.blackpassword.core.ToastNotification;
+import com.mycompany.blackpassword.core.util.ToastNotification;
 import java.io.File;
-import java.util.Arrays;
-import javax.swing.JCheckBox;
 import javax.swing.JFileChooser;
 import javax.swing.JOptionPane;
 import javax.swing.SwingConstants;
@@ -62,7 +60,6 @@ public class CifradorArchivo extends javax.swing.JInternalFrame {
         jPanelCard.putClientProperty(FlatClientProperties.STYLE, "background: #FFFFFF; border: 0,0,0,0, #FFFFFF, 0, 20");
     }
 
-    @SuppressWarnings("unchecked")
     private void initComponents() {
         jPanelCard = new javax.swing.JPanel();
         lblTitulo = new javax.swing.JLabel();
@@ -191,7 +188,7 @@ public class CifradorArchivo extends javax.swing.JInternalFrame {
         if (fc.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
             try {
                 File original = archivoSeleccionado;
-                CifradorLogica.cifrarArchivo(original, fc.getSelectedFile(), txtPassword.getPassword());
+                CifradorLogica.cifrarArchivo(original, fc.getSelectedFile(), txtPassword.getPassword(), SecuritySession.getUserSalt());
                 
                 if (checkDestruir.isSelected()) {
                     if (original.delete()) {
@@ -227,7 +224,7 @@ public class CifradorArchivo extends javax.swing.JInternalFrame {
         
         if (fc.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
             try {
-                CifradorLogica.descifrarArchivo(archivoSeleccionado, fc.getSelectedFile(), txtPassword.getPassword());
+                CifradorLogica.descifrarArchivo(archivoSeleccionado, fc.getSelectedFile(), txtPassword.getPassword(), SecuritySession.getUserSalt());
                 ToastNotification.show(this, "Archivo descifrado con éxito.", ToastNotification.Type.SUCCESS);
                 if (!"Invitado".equals(userEmail)) {
                     AuditService.log(userEmail, "FILE_DECRYPT_LOCAL", "Archivo: " + archivoSeleccionado.getName());

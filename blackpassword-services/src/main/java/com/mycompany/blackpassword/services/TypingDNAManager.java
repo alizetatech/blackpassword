@@ -11,7 +11,6 @@ public class TypingDNAManager {
 
     private final List<Long> pressTimestamps = new ArrayList<>();
     private final List<Long> releaseTimestamps = new ArrayList<>();
-    private long lastEventTime = 0;
 
     /**
      * Registra un evento de pulsación.

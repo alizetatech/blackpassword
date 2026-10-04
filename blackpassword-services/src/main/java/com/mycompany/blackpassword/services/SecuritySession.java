@@ -7,9 +7,8 @@ import java.util.Arrays;
 import java.util.Map;
 
 /**
- * Almacén de Seguridad en Memoria v3.1.
- * Centraliza la validación de identidad cruzada, RSA-Binding, Typing DNA y Ubicación.
- * Acceso total sin restricciones de suscripción.
+ * Almacén de Seguridad en Memoria v3.2 (Nivel 11 - ProtectedPrivateKey).
+ * Centraliza la validación de identidad y el anclaje HSM doblemente blindado.
  */
 public class SecuritySession {
     
@@ -21,66 +20,51 @@ public class SecuritySession {
     private static Map<String, Object> userClaims; 
     private static String typingProfile;  
     private static String currentLocation; 
-    private static char[] masterPassword; 
+    private static final String HSM_ALIAS = "BP_SESSION_KEY_" + java.util.UUID.randomUUID().toString();
+    private static byte[] userSalt;
 
-    /**
-     * Valida que la identidad en el token coincida con la identidad local, de la DB y la llave RSA.
-     */
     public static boolean isIdentityValid(String email) {
-        if (userClaims == null || userClaims.isEmpty()) {
-            System.err.println("[SecuritySession] Falla: No hay claims de usuario.");
-            return false;
-        }
-        
+        if (userClaims == null || userClaims.isEmpty()) return false;
         try {
             String status = (String) userClaims.get("account_status");
-            if (!"ACTIVE".equals(status)) {
-                System.err.println("[SecuritySession] Falla: Cuenta no activa (" + status + ")");
-                return false;
-            }
+            if (!"ACTIVE".equals(status)) return false;
 
-            String localEmailHash = RSALogica.hashToHex(email);
+            String localEmailHash = RSALogica.hashConstantToHex(email);
             String claimEmailHash = (String) userClaims.get("email_hash");
-            if (claimEmailHash == null || !claimEmailHash.equals(localEmailHash)) {
-                System.err.println("[SecuritySession] Falla: Hash de Email no coincide.");
-                return false;
-            }
+            if (claimEmailHash == null || !claimEmailHash.equalsIgnoreCase(localEmailHash)) return false;
 
             String claimUidHash = (String) userClaims.get("uid_hash");
-            if (claimUidHash == null || localUidHash == null || !claimUidHash.equals(localUidHash)) {
-                System.err.println("[SecuritySession] Falla: Hash de UID no coincide.");
-                return false;
-            }
+            if (claimUidHash == null || localUidHash == null || !claimUidHash.equalsIgnoreCase(localUidHash)) return false;
 
-            String claimPubKeyHash = (String) userClaims.get("pubkey_hash");
-            if (claimPubKeyHash != null && currentPublicKey != null) {
+            if (currentPublicKey != null) {
                 String currentKeyHash = RSALogica.hashPublicKey(currentPublicKey);
-                if (!claimPubKeyHash.equals(currentKeyHash)) {
-                    System.err.println("[SecuritySession] Falla: RSA_BINDING_VIOLATION (Token: " + claimPubKeyHash + " vs Local: " + currentKeyHash + ")");
-                    IntrusionService.reportFailure(email, "RSA_BINDING_VIOLATION");
-                    return false;
-                }
+                String claimKeyHash = (String) userClaims.get("pubkey_hash");
+                if (claimKeyHash == null || !currentKeyHash.equalsIgnoreCase(claimKeyHash)) return false;
             }
             return true;
-        } catch (Exception e) {
-            System.err.println("[SecuritySession] Error en validación: " + e.getMessage());
-            return false;
-        }
+        } catch (Exception e) { return false; }
     }
 
     public static void setKeySession(PublicKey pub, PrivateKey priv, char[] sessionPin) {
         currentPublicKey = pub;
         currentPrivateKey = priv;
-        try {
-            sessionPinHash = RSALogica.hashSHA256(sessionPin, RSALogica.getUniversalSalt());
-        } catch (Exception e) {
+        if (sessionPin != null && sessionPin.length > 0) {
+            try {
+                sessionPinHash = RSALogica.hashSHA256(sessionPin, RSALogica.getUniversalSalt().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            } catch (Exception e) { 
+                sessionPinHash = null; 
+            } finally { 
+                Arrays.fill(sessionPin, (char) 0); 
+            }
+        } else {
             sessionPinHash = null;
-        } finally {
-            if (sessionPin != null) Arrays.fill(sessionPin, (char) 0);
         }
     }
 
+    // --- ACCESSORS ---
     public static void setUserPinHash(String pinHash) { userPinHash = pinHash; }
+    public static void setUserSalt(byte[] salt) { userSalt = salt; }
+    public static byte[] getUserSalt() { return userSalt; }
     public static void setLocalUidHash(String uidHash) { localUidHash = uidHash; }
     public static String getLocalUidHash() { return localUidHash; }
     public static void setUserClaims(Map<String, Object> claims) { userClaims = claims; }
@@ -91,43 +75,83 @@ public class SecuritySession {
     public static String getCurrentLocation() { return currentLocation != null ? currentLocation : "Ubicación no detectada"; }
     public static PublicKey getPublicKey() { return currentPublicKey; }
     public static PrivateKey getPrivateKey() { return currentPrivateKey; }
+
+    // --- PROTECTED HSM FLOW ---
     
     public static void setMasterPassword(char[] pwd) {
-        if (masterPassword != null) Arrays.fill(masterPassword, (char)0);
-        masterPassword = pwd != null ? Arrays.copyOf(pwd, pwd.length) : null;
-    }
-    
-    public static char[] getMasterPassword() { return masterPassword; }
-    
-    public static boolean verifySessionPin(char[] inputPin) {
+        if (pwd == null) {
+            com.mycompany.blackpassword.services.hsm.KeyAnchorService.getInstance().destroyAll();
+            return;
+        }
+        if (sessionPinHash == null) {
+            System.err.println("[SecuritySession] Falla: PIN de sesión ausente.");
+            return;
+        }
         try {
-            return RSALogica.hashSHA256(inputPin, RSALogica.getUniversalSalt()).equals(sessionPinHash);
-        } catch (Exception e) { return false; }
-        finally { if (inputPin != null) Arrays.fill(inputPin, (char) 0); }
+            byte[] encoded = java.nio.charset.StandardCharsets.UTF_8.encode(java.nio.CharBuffer.wrap(pwd)).array();
+            char[] protector = sessionPinHash.toCharArray();
+            
+            com.mycompany.blackpassword.services.hsm.KeyAnchorService.getInstance().sealSessionKey(HSM_ALIAS, encoded, protector);
+            
+            Arrays.fill(encoded, (byte) 0);
+            Arrays.fill(pwd, (char) 0);
+            Arrays.fill(protector, (char) 0);
+        } catch (Exception e) {
+            System.err.println("[SecuritySession] Error HSM Seal: " + e.getMessage());
+        }
+    }
+
+    public static char[] unsealMasterPassword() throws Exception {
+        if (sessionPinHash == null) throw new Exception("Pérdida de integridad de sesión (PIN)");
+        
+        char[] protector = sessionPinHash.toCharArray();
+        byte[] unsealed = com.mycompany.blackpassword.services.hsm.KeyAnchorService.getInstance().unsealSessionKey(HSM_ALIAS, protector);
+        
+        String decoded = new String(unsealed, java.nio.charset.StandardCharsets.UTF_8);
+        Arrays.fill(unsealed, (byte) 0);
+        Arrays.fill(protector, (char) 0);
+        return decoded.toCharArray();
     }
 
     public static boolean verifyUserPin(char[] inputPin) {
-        if (userPinHash == null) return false;
+        if (userPinHash == null || inputPin == null || inputPin.length == 0) return false;
         try {
-            // Soportar legacy (null) y nuevo (universal)
-            String hashConSal = RSALogica.hashSHA256(inputPin, RSALogica.getUniversalSalt());
-            String hashSinSal = RSALogica.hashSHA256(inputPin, null);
-            return hashConSal.equals(userPinHash) || hashSinSal.equals(userPinHash);
-        } catch (Exception e) { return false; }
-        finally { if (inputPin != null) Arrays.fill(inputPin, (char) 0); }
+            byte[] salt = (userSalt != null) ? userSalt : RSALogica.getUniversalSalt().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            
+            // Si el PIN almacenado es Hexadecimal (Legacy, 64 chars)
+            if (userPinHash.length() == 64) {
+                char[] hexHash = RSALogica.hashToHex(inputPin, salt);
+                byte[] computed = new String(hexHash).toLowerCase().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                byte[] stored = userPinHash.toLowerCase().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                boolean match = java.security.MessageDigest.isEqual(computed, stored);
+                com.mycompany.blackpassword.crypto.SecureCharArray.clear(hexHash);
+                return match;
+            }
+            
+            // Si el PIN almacenado es Base64 (Moderno, ~44 chars)
+            String hash = RSALogica.hashSHA256(inputPin, salt);
+            byte[] computed = hash.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            byte[] stored = userPinHash.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            return java.security.MessageDigest.isEqual(computed, stored);
+        } catch (Exception e) { 
+            return false; 
+        } finally { 
+            if (inputPin != null) Arrays.fill(inputPin, (char) 0); 
+        }
     }
 
     public static void clear() {
         currentPublicKey = null; currentPrivateKey = null; sessionPinHash = null;
         userPinHash = null; userClaims = null; localUidHash = null;
-        typingProfile = null; currentLocation = null;
-        if (masterPassword != null) {
-            Arrays.fill(masterPassword, (char) 0);
-            masterPassword = null;
-        }
+        typingProfile = null; currentLocation = null; userSalt = null;
+        com.mycompany.blackpassword.services.hsm.KeyAnchorService.getInstance().destroyAll();
     }
 
     public static boolean isSessionActive() {
+        return currentPublicKey != null && currentPrivateKey != null;
+    }
+
+    public static boolean isFullSessionActive() {
         return currentPublicKey != null && currentPrivateKey != null && sessionPinHash != null;
     }
 }

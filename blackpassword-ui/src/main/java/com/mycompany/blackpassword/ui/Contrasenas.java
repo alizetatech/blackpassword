@@ -2,19 +2,17 @@ package com.mycompany.blackpassword.ui;
 
 import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
-import com.google.cloud.firestore.DocumentSnapshot;
-import com.google.cloud.firestore.Firestore;
-import com.google.cloud.firestore.QueryDocumentSnapshot;
 import com.mycompany.blackpassword.services.AuditService;
-import com.mycompany.blackpassword.services.FirebaseService;
 import com.mycompany.blackpassword.services.IntrusionService;
 import com.mycompany.blackpassword.services.QRCodeService;
 import com.mycompany.blackpassword.crypto.RSALogica;
 import com.mycompany.blackpassword.services.SecuritySession;
-import com.mycompany.blackpassword.core.ToastNotification;
+import com.mycompany.blackpassword.core.util.ToastNotification;
 import com.mycompany.blackpassword.crypto.VaultManager;
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.io.File;
+import java.nio.file.Files;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
@@ -30,7 +28,6 @@ import java.awt.image.BufferedImage;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import javax.swing.BorderFactory;
@@ -47,7 +44,6 @@ import javax.swing.JTextField;
 import javax.swing.RowFilter;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
-import javax.swing.SwingWorker;
 import javax.swing.Timer;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableRowSorter;
@@ -71,12 +67,15 @@ public class Contrasenas extends javax.swing.JInternalFrame {
     private JButton btnSave;
     private JButton btnView;
     private JButton btnCopy;
+    private JButton btnEdit;
     private JButton btnQR;
     private JButton btnDelete;
     private JButton btnRefresh;
     private JButton btnVolver;
     private JButton btnGenPass;
     private JButton btnCopyUser;
+    private JButton btnExportData;
+    private JButton btnImportData;
     
     private JLabel jLabelTitulo;
     private List<Map<String, Object>> secretDocumentsRaw = new ArrayList<>();
@@ -123,8 +122,7 @@ public class Contrasenas extends javax.swing.JInternalFrame {
                 + "intercellSpacing: 0,1;"
                 + "selectionBackground: #E5F3FF;"
                 + "selectionForeground: #000000;"
-                + "showVerticalLines: false;"
-                + "arc: 12");
+                + "showVerticalLines: false");
         
         table.getTableHeader().putClientProperty(FlatClientProperties.STYLE, "font: bold; background: #F8F9FA; separatorColor: #E0E0E0");
         
@@ -138,9 +136,10 @@ public class Contrasenas extends javax.swing.JInternalFrame {
 
         btnSave.putClientProperty(FlatClientProperties.STYLE, "arc: 16; background: #107C10; foreground: #FFFFFF; hoverBackground: #0E6A0E; borderWidth: 0; font: bold 14");
         
-        String actionStyle = "arc: 14; background: #F3F3F3; foreground: #333333; hoverBackground: #E5E5E5; borderWidth: 0; font: bold 12; textAlign: left; margin: 0,20,0,20";
+        String actionStyle = "arc: 14; background: #F3F3F3; foreground: #333333; hoverBackground: #E5E5E5; borderWidth: 0; font: bold 12; horizontalAlignment: left; margin: 0,20,0,20";
         btnView.putClientProperty(FlatClientProperties.STYLE, actionStyle);
         btnCopy.putClientProperty(FlatClientProperties.STYLE, actionStyle);
+        btnEdit.putClientProperty(FlatClientProperties.STYLE, actionStyle);
         btnQR.putClientProperty(FlatClientProperties.STYLE, actionStyle);
         btnDelete.putClientProperty(FlatClientProperties.STYLE, actionStyle + "; foreground: #D83B01; hoverBackground: #FDE7E9");
         
@@ -154,11 +153,14 @@ public class Contrasenas extends javax.swing.JInternalFrame {
             btnSave.setIcon(new FlatSVGIcon("img/vault.svg", 20, 20));
             btnView.setIcon(new FlatSVGIcon("img/unlock.svg", 18, 18));
             btnCopy.setIcon(new FlatSVGIcon("img/files.svg", 18, 18));
+            btnEdit.setIcon(new FlatSVGIcon("img/key.svg", 18, 18));
             btnQR.setIcon(new FlatSVGIcon("img/palette.svg", 18, 18)); 
             btnDelete.setIcon(new FlatSVGIcon("img/panic.svg", 18, 18));
             btnRefresh.setIcon(new FlatSVGIcon("img/files.svg", 18, 18));
             btnVolver.setIcon(new FlatSVGIcon("img/vault.svg", 18, 18));
             btnCopyUser.setIcon(new FlatSVGIcon("img/files.svg", 16, 16));
+            btnExportData.setIcon(new FlatSVGIcon("img/report.svg", 18, 18));
+            btnImportData.setIcon(new FlatSVGIcon("img/unlock.svg", 18, 18));
         } catch (Exception e) {}
     }
 
@@ -180,15 +182,25 @@ public class Contrasenas extends javax.swing.JInternalFrame {
             boolean selected = table.getSelectedRow() != -1;
             btnView.setEnabled(selected);
             btnCopy.setEnabled(selected);
+            btnEdit.setEnabled(selected);
             btnQR.setEnabled(selected);
             btnDelete.setEnabled(selected);
         });
-        btnView.setEnabled(false); btnCopy.setEnabled(false); btnQR.setEnabled(false); btnDelete.setEnabled(false);
+        btnView.setEnabled(false); btnCopy.setEnabled(false); btnEdit.setEnabled(false); btnQR.setEnabled(false); btnDelete.setEnabled(false);
+
+        table.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                if (e.getClickCount() == 2 && table.getSelectedRow() != -1) {
+                    editSecret();
+                }
+            }
+        });
     }
 
     private void initComponentsCustom() {
         // Eliminamos setSize fijo para usar dimensionamiento dinámico
-        setLayout(new BorderLayout(0, 0));
+        getContentPane().setLayout(new BorderLayout(0, 0));
 
         // --- HEADER ---
         JPanel panelHeader = new JPanel(new BorderLayout());
@@ -210,9 +222,20 @@ public class Contrasenas extends javax.swing.JInternalFrame {
         btnRefresh = new JButton("SINCRONIZAR NUBE");
         btnRefresh.addActionListener(e -> loadSecretsFromFirebase());
         panelRightHeader.add(btnRefresh);
+        
+        btnExportData = new JButton("EXPORTAR DATOS");
+        btnExportData.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #666666; foreground: #FFFFFF; font: bold 12");
+        btnExportData.addActionListener(e -> showExportMenu());
+        panelRightHeader.add(btnExportData);
+        
+        btnImportData = new JButton("IMPORTAR");
+        btnImportData.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #0078D4; foreground: #FFFFFF; font: bold 12");
+        btnImportData.addActionListener(e -> showImportDialog());
+        panelRightHeader.add(btnImportData);
+        
         panelHeader.add(panelRightHeader, BorderLayout.EAST);
         
-        add(panelHeader, BorderLayout.NORTH);
+        getContentPane().add(panelHeader, BorderLayout.NORTH);
 
         // --- SIDE PANEL (WEST) ---
         JPanel panelSide = new JPanel(new BorderLayout());
@@ -298,6 +321,11 @@ public class Contrasenas extends javax.swing.JInternalFrame {
         gbc.gridy = row++;
         panelContentSide.add(btnCopy, gbc);
 
+        btnEdit = new JButton("EDITAR CREDENCIAL");
+        btnEdit.addActionListener(e -> editSecret());
+        gbc.gridy = row++;
+        panelContentSide.add(btnEdit, gbc);
+
         btnQR = new JButton("GENERAR CÓDIGO QR");
         btnQR.addActionListener(e -> showQRCode());
         gbc.gridy = row++;
@@ -319,7 +347,7 @@ public class Contrasenas extends javax.swing.JInternalFrame {
         sideScroll.getViewport().setOpaque(false);
         
         panelSide.add(sideScroll, BorderLayout.CENTER);
-        add(panelSide, BorderLayout.WEST);
+        getContentPane().add(panelSide, BorderLayout.WEST);
 
         // --- CENTER PANEL (TABLE) ---
         JPanel panelCenter = new JPanel(new BorderLayout(0, 15));
@@ -341,7 +369,7 @@ public class Contrasenas extends javax.swing.JInternalFrame {
         scroll.setBorder(BorderFactory.createLineBorder(new Color(230, 230, 230)));
         panelCenter.add(scroll, BorderLayout.CENTER);
         
-        add(panelCenter, BorderLayout.CENTER);
+        getContentPane().add(panelCenter, BorderLayout.CENTER);
     }
 
     private void addLabeledField(JPanel p, String label, JTextField f, GridBagConstraints gbc, int row) {
@@ -451,14 +479,183 @@ public class Contrasenas extends javax.swing.JInternalFrame {
                     String pass = decryptPasswordFromRow(row);
                     StringSelection selection = new StringSelection(pass);
                     Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, selection);
-                    ToastNotification.show(this, "Copiado al portapapeles", ToastNotification.Type.SUCCESS);
+                    ToastNotification.show(this, "Copiado al portapapeles (expira en 30s)", ToastNotification.Type.SUCCESS);
                     AuditService.log(userEmail, "VAULT_PIN_COPY", "Copiado: " + model.getValueAt(row, 0));
+
+                    // Autolimpiado del portapapeles tras 30 segundos
+                    final String copiedSecret = pass;
+                    javax.swing.Timer purgeTimer = new javax.swing.Timer(30000, evt -> {
+                        try {
+                            java.awt.datatransfer.Clipboard clip = Toolkit.getDefaultToolkit().getSystemClipboard();
+                            if (clip.isDataFlavorAvailable(java.awt.datatransfer.DataFlavor.stringFlavor)) {
+                                String currentContent = (String) clip.getData(java.awt.datatransfer.DataFlavor.stringFlavor);
+                                if (copiedSecret.equals(currentContent)) {
+                                    clip.setContents(new StringSelection(""), null);
+                                    ToastNotification.show(this, "Portapapeles limpiado por seguridad", ToastNotification.Type.INFO);
+                                }
+                            }
+                        } catch (Exception ex) {}
+                    });
+                    purgeTimer.setRepeats(false);
+                    purgeTimer.start();
                 } catch (Exception e) { ToastNotification.show(this, "Error al descifrar", ToastNotification.Type.ERROR); }
             } else {
                 IntrusionService.reportFailure(userEmail, "VAULT_PIN_COPY");
                 JOptionPane.showMessageDialog(this, "PIN incorrecto.", "Error", JOptionPane.ERROR_MESSAGE);
             }
         }
+    }
+
+    private void editSecret() {
+        validarIntegridad();
+        int row = table.getSelectedRow();
+        if (row == -1) return;
+
+        JPasswordField pfPin = new JPasswordField(4);
+        if (JOptionPane.showConfirmDialog(this, new Object[]{"PIN de seguridad:", pfPin}, "Verificación", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        if (!SecuritySession.verifyUserPin(pfPin.getPassword())) {
+            IntrusionService.reportFailure(userEmail, "VAULT_PIN_EDIT");
+            JOptionPane.showMessageDialog(this, "PIN incorrecto.", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        IntrusionService.reportSuccess(userEmail);
+
+        int modelRow = table.convertRowIndexToModel(row);
+        Map<String, Object> data = secretDocumentsRaw.get(modelRow);
+        String oldService = (String) data.getOrDefault("service", "");
+        String oldUser = (String) data.getOrDefault("username", "");
+        String firestoreDocId = (String) data.get("id");
+
+        String currentPass;
+        try {
+            currentPass = decryptPasswordFromRow(row);
+        } catch (Exception e) {
+            ToastNotification.show(this, "Error al descifrar para editar", ToastNotification.Type.ERROR);
+            return;
+        }
+
+        JDialog editDialog = new JDialog(SwingUtilities.getWindowAncestor(this), "EDITAR CREDENCIAL: " + oldService, JDialog.ModalityType.APPLICATION_MODAL);
+        editDialog.setLayout(new BorderLayout(15, 15));
+
+        JPanel contentPanel = new JPanel(new BorderLayout(0, 15));
+        contentPanel.setBorder(BorderFactory.createEmptyBorder(20, 25, 20, 25));
+
+        JPanel formPanel = new JPanel(new GridBagLayout());
+        formPanel.setOpaque(false);
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.gridx = 0;
+        gbc.weightx = 1.0;
+        int dRow = 0;
+
+        JTextField txtEditService = new JTextField(oldService);
+        txtEditService.setPreferredSize(new Dimension(320, 38));
+        String fieldStyle = "arc: 12; margin: 4,10,4,10; background: #FFFFFF; borderWidth: 1; focusColor: #0078D4";
+        txtEditService.putClientProperty(FlatClientProperties.STYLE, fieldStyle);
+
+        JTextField txtEditUser = new JTextField(oldUser);
+        txtEditUser.setPreferredSize(new Dimension(320, 38));
+        txtEditUser.putClientProperty(FlatClientProperties.STYLE, fieldStyle);
+
+        JPasswordField txtEditPass = new JPasswordField(currentPass);
+        txtEditPass.setPreferredSize(new Dimension(240, 38));
+        txtEditPass.putClientProperty(FlatClientProperties.STYLE, fieldStyle + "; showRevealButton: true");
+
+        // Sitio / Servicio
+        gbc.insets = new Insets(0, 0, 4, 0); gbc.gridy = dRow++;
+        JLabel lblS = new JLabel("Sitio / Servicio:");
+        lblS.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        formPanel.add(lblS, gbc);
+        gbc.insets = new Insets(0, 0, 12, 0); gbc.gridy = dRow++;
+        formPanel.add(txtEditService, gbc);
+
+        // Usuario / Email
+        gbc.insets = new Insets(0, 0, 4, 0); gbc.gridy = dRow++;
+        JLabel lblU = new JLabel("Usuario / Email:");
+        lblU.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        formPanel.add(lblU, gbc);
+        gbc.insets = new Insets(0, 0, 12, 0); gbc.gridy = dRow++;
+        formPanel.add(txtEditUser, gbc);
+
+        // Contraseña
+        gbc.insets = new Insets(0, 0, 4, 0); gbc.gridy = dRow++;
+        JLabel lblP = new JLabel("Contraseña:");
+        lblP.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        formPanel.add(lblP, gbc);
+
+        JPanel passRowPanel = new JPanel(new BorderLayout(8, 0));
+        passRowPanel.setOpaque(false);
+        passRowPanel.add(txtEditPass, BorderLayout.CENTER);
+
+        JButton btnGen = new JButton("GEN");
+        btnGen.setPreferredSize(new Dimension(65, 38));
+        btnGen.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #F3F3F3; foreground: #0078D4; font: bold");
+        btnGen.addActionListener(e -> {
+            PasswordGeneratorPro gen = new PasswordGeneratorPro(editDialog);
+            gen.setVisible(true);
+            String genPass = gen.getGeneratedPassword();
+            if (genPass != null) {
+                txtEditPass.setText(genPass);
+            }
+        });
+        passRowPanel.add(btnGen, BorderLayout.EAST);
+
+        gbc.insets = new Insets(0, 0, 15, 0); gbc.gridy = dRow++;
+        formPanel.add(passRowPanel, gbc);
+
+        contentPanel.add(formPanel, BorderLayout.CENTER);
+
+        // Botones de acción
+        JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        btnPanel.setOpaque(false);
+
+        JButton btnCancel = new JButton("Cancelar");
+        btnCancel.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #F3F3F3; font: bold 12");
+        btnCancel.addActionListener(e -> editDialog.dispose());
+
+        JButton btnSaveEdit = new JButton("GUARDAR CAMBIOS");
+        btnSaveEdit.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #0078D4; foreground: #FFFFFF; font: bold 12");
+        btnSaveEdit.addActionListener(e -> {
+            String newService = txtEditService.getText().trim();
+            String newUser = txtEditUser.getText().trim();
+            char[] newPass = txtEditPass.getPassword();
+
+            if (newService.isEmpty() || newUser.isEmpty() || newPass.length == 0) {
+                JOptionPane.showMessageDialog(editDialog, "Todos los campos son obligatorios.", "Advertencia", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+
+            btnSaveEdit.setEnabled(false);
+            btnSaveEdit.setText("Guardando...");
+
+            VaultManager.updateSecret(userEmail, firestoreDocId, oldService, newService, newUser, newPass).thenAccept(success -> {
+                SwingUtilities.invokeLater(() -> {
+                    if (success) {
+                        ToastNotification.show(this, "Credencial actualizada exitosamente", ToastNotification.Type.SUCCESS);
+                        AuditService.log(userEmail, "VAULT_EDIT", "Editado: " + oldService + " -> " + newService);
+                        editDialog.dispose();
+                        loadSecretsFromFirebase();
+                    } else {
+                        btnSaveEdit.setEnabled(true);
+                        btnSaveEdit.setText("GUARDAR CAMBIOS");
+                        JOptionPane.showMessageDialog(editDialog, "Error al actualizar la credencial en la bóveda.", "Error", JOptionPane.ERROR_MESSAGE);
+                    }
+                });
+            });
+        });
+
+        btnPanel.add(btnCancel);
+        btnPanel.add(btnSaveEdit);
+        contentPanel.add(btnPanel, BorderLayout.SOUTH);
+
+        editDialog.add(contentPanel, BorderLayout.CENTER);
+        editDialog.pack();
+        editDialog.setLocationRelativeTo(this);
+        editDialog.setResizable(false);
+        editDialog.setVisible(true);
     }
 
     private void showQRCode() {
@@ -528,5 +725,149 @@ public class Contrasenas extends javax.swing.JInternalFrame {
         ToastNotification.show(this, "Eliminando...", ToastNotification.Type.SUCCESS);
         AuditService.log(userEmail, "VAULT_DELETE", "Eliminado: " + serviceId);
         loadSecretsFromFirebase();
+    }
+
+    private void showExportMenu() {
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        
+        javax.swing.JMenuItem itemPlain = new javax.swing.JMenuItem("Exportar en Plano (Excel)");
+        itemPlain.addActionListener(e -> executeExport("PLAIN"));
+        
+        javax.swing.JMenuItem itemAes = new javax.swing.JMenuItem("Exportar con Cifrado AES-256");
+        itemAes.addActionListener(e -> executeExport("AES"));
+        
+        javax.swing.JMenuItem itemKek = new javax.swing.JMenuItem("Exportar Blindado con KEK");
+        itemKek.addActionListener(e -> executeExport("KEK"));
+        
+        menu.add(itemPlain);
+        menu.add(itemAes);
+        menu.add(itemKek);
+        
+        menu.show(btnExportData, 0, btnExportData.getHeight());
+    }
+
+    private void executeExport(String mode) {
+        if (secretDocumentsRaw.isEmpty()) {
+            ToastNotification.show(this, "Bóveda vacía, nada que exportar.", ToastNotification.Type.WARNING);
+            return;
+        }
+
+        JPasswordField pfPin = new JPasswordField(4);
+        if (JOptionPane.showConfirmDialog(this, new Object[]{"Ingrese PIN de seguridad para autorizar exportación:", pfPin}, "AUTORIZACIÓN REQUERIDA", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) return;
+        
+        if (!SecuritySession.verifyUserPin(pfPin.getPassword())) {
+            JOptionPane.showMessageDialog(this, "PIN INCORRECTO. Exportación cancelada.", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        try {
+            String csvContent = com.mycompany.blackpassword.services.ExportService.generateCsvContent(secretDocumentsRaw, SecuritySession.getPrivateKey());
+            
+            javax.swing.JFileChooser fc = new javax.swing.JFileChooser();
+            fc.setDialogTitle("Guardar Reporte Bóveda (" + mode + ")");
+            
+            if (fc.showSaveDialog(this) == javax.swing.JFileChooser.APPROVE_OPTION) {
+                File target = fc.getSelectedFile();
+                char[] pass = null;
+
+                switch (mode) {
+                    case "PLAIN":
+                        int confirmPlain = JOptionPane.showConfirmDialog(this, 
+                            "⚠️ ADVERTENCIA DE SEGURIDAD CRÍTICA:\n\n" +
+                            "Está a punto de exportar todas sus contraseñas en TEXTO PLANO (.csv).\n" +
+                            "Cualquier persona o programa con acceso a este equipo podrá leerlas.\n\n" +
+                            "¿Está absolutamente seguro de continuar?", 
+                            "Riesgo de Exposición de Credenciales", 
+                            JOptionPane.YES_NO_OPTION, 
+                            JOptionPane.WARNING_MESSAGE);
+                        if (confirmPlain != JOptionPane.YES_OPTION) return;
+
+                        if (!target.getName().endsWith(".csv")) target = new File(target.getAbsolutePath() + ".csv");
+                        Files.write(target.toPath(), csvContent.getBytes(StandardCharsets.UTF_8));
+                        AuditService.log(userEmail, "CRITICAL_SECURITY_ALERT", "Exportación de bóveda en texto plano realizada: " + target.getName());
+                        break;
+                    case "AES":
+                        if (!target.getName().endsWith(".enc")) target = new File(target.getAbsolutePath() + ".enc");
+                        JPasswordField pfAes = new JPasswordField();
+                        if (JOptionPane.showConfirmDialog(this, new Object[]{"Ingrese contraseña para el archivo AES:", pfAes}, "Cifrado AES", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) return;
+                        pass = pfAes.getPassword();
+                        com.mycompany.blackpassword.services.ExportService.exportAesEncrypted(csvContent, target, pass);
+                        break;
+                    case "KEK":
+                        if (!target.getName().endsWith(".wcek")) target = new File(target.getAbsolutePath() + ".wcek");
+                        JPasswordField pfKek = new JPasswordField();
+                        if (JOptionPane.showConfirmDialog(this, new Object[]{"Ingrese Frase de Paso (Passphrase) para blindaje KEK:", pfKek}, "Blindaje KEK", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) return;
+                        pass = pfKek.getPassword();
+                        com.mycompany.blackpassword.services.ExportService.exportKekEncrypted(csvContent, target, pass);
+                        break;
+                }
+                
+                ToastNotification.show(this, "Reporte exportado con éxito.", ToastNotification.Type.SUCCESS);
+                AuditService.log(userEmail, "VAULT_EXPORT_" + mode, "Archivo: " + target.getName());
+                if (pass != null) java.util.Arrays.fill(pass, '0');
+            }
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this, "Error en exportación: " + e.getMessage(), "Error Crítico", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void showImportDialog() {
+        javax.swing.JFileChooser fc = new javax.swing.JFileChooser();
+        fc.setDialogTitle("Seleccionar archivo para importar a la Bóveda");
+        if (fc.showOpenDialog(this) == javax.swing.JFileChooser.APPROVE_OPTION) {
+            executeImport(fc.getSelectedFile());
+        }
+    }
+
+    private void executeImport(File file) {
+        try {
+            byte[] data = Files.readAllBytes(file.toPath());
+            String name = file.getName().toLowerCase();
+            String content = "";
+            char[] pass = null;
+
+            if (name.endsWith(".csv")) {
+                content = new String(data, StandardCharsets.UTF_8);
+            } else if (name.endsWith(".enc")) {
+                JPasswordField pfAes = new JPasswordField();
+                if (JOptionPane.showConfirmDialog(this, new Object[]{"Archivo cifrado con AES. Ingrese contraseña:", pfAes}, "Desencriptación AES", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) return;
+                pass = pfAes.getPassword();
+                content = com.mycompany.blackpassword.services.ExportService.decryptAes(data, pass);
+            } else if (name.endsWith(".wcek")) {
+                JPasswordField pfKek = new JPasswordField();
+                if (JOptionPane.showConfirmDialog(this, new Object[]{"Archivo blindado con KEK. Ingrese frase de paso:", pfKek}, "Desblindaje KEK", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) return;
+                pass = pfKek.getPassword();
+                content = com.mycompany.blackpassword.services.ExportService.decryptKek(data, pass);
+            } else {
+                throw new Exception("Formato no reconocido. Use .csv, .enc o .wcek");
+            }
+
+            List<Map<String, String>> allCredentials = com.mycompany.blackpassword.services.ExportService.parseCsv(content);
+            if (allCredentials.isEmpty()) throw new Exception("No se encontraron registros válidos en el archivo.");
+
+            // Abrir el diálogo interactivo de vista previa
+            ImportPreviewDialog preview = new ImportPreviewDialog(javax.swing.SwingUtilities.getWindowAncestor(this), allCredentials);
+            preview.setVisible(true);
+
+            if (preview.isConfirmed()) {
+                List<Map<String, String>> selectedCredentials = preview.getSelectedData();
+                int count = 0;
+                for (Map<String, String> cred : selectedCredentials) {
+                    String s = cred.get("s");
+                    String u = cred.get("u");
+                    char[] p = cred.get("p").toCharArray();
+                    VaultManager.saveSecret(userEmail, s, u, p);
+                    count++;
+                }
+
+                ToastNotification.show(this, "Importación exitosa: " + count + " registros guardados.", ToastNotification.Type.SUCCESS);
+                AuditService.log(userEmail, "VAULT_IMPORT_STAGED", "Importados " + count + " de " + allCredentials.size() + " desde " + name);
+                loadSecretsFromFirebase();
+            }
+
+            if (pass != null) java.util.Arrays.fill(pass, '0');
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this, "Fallo en la importación: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
     }
 }
