@@ -4,8 +4,15 @@ import com.mycompany.blackpassword.core.util.ToastNotification;
 import com.mycompany.blackpassword.services.AuditService;
 import com.mycompany.blackpassword.ui.FramePrincipal;
 import com.formdev.flatlaf.FlatLightLaf;
+import java.awt.AWTEvent;
+import java.awt.Component;
+import java.awt.Container;
 import java.awt.KeyboardFocusManager;
+import java.awt.Toolkit;
 import java.awt.Window;
+import java.awt.event.HierarchyEvent;
+import java.awt.event.MouseEvent;
+import javax.swing.AbstractButton;
 import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
@@ -97,11 +104,23 @@ public class Blackpassword {
             // Personalización fina de FlatLaf
             UIManager.put("Button.hoverBackground", "#F0F0F0");
             UIManager.put("Button.pressedBackground", "#E0E0E0");
+            UIManager.put("Button.focusPainted", Boolean.FALSE);
+            UIManager.put("ToggleButton.focusPainted", Boolean.FALSE);
+            UIManager.put("Button.showFocusOwner", Boolean.FALSE);
+            UIManager.put("Button.focusWidth", 0);
+            UIManager.put("Button.innerFocusWidth", 0);
+            UIManager.put("Button.focusedBorderColor", null);
+            UIManager.put("Button.default.focusedBorderColor", null);
+            UIManager.put("Button.focusedBackground", null);
+            UIManager.put("Button.default.focusedBackground", null);
             UIManager.put("TableHeader.background", "#FFFFFF");
             UIManager.put("Table.selectionBackground", "#E1F0FF");
             UIManager.put("Table.selectionForeground", "#005A9E");
             
-            System.out.println("[v9.1] Capa 1: Motor Visual Refinado.");
+            // Comportamiento anti-selección de botones (no se quedan con borde/anillo de foco al hacer clic)
+            setupAntiBotonSeleccionado();
+            
+            System.out.println("[v9.1] Capa 1: Motor Visual Refinado + Anti-Selección de Botones.");
         } catch (Exception e) {
             System.err.println("Fallo en Capa 1: " + e.getMessage());
         }
@@ -141,5 +160,45 @@ public class Blackpassword {
                 e.printStackTrace();
             }
         });
+    }
+
+    private static void setupAntiBotonSeleccionado() {
+        try {
+            Toolkit.getDefaultToolkit().addAWTEventListener(event -> {
+                if (event instanceof MouseEvent me) {
+                    if (me.getSource() instanceof AbstractButton btn) {
+                        btn.setFocusPainted(false);
+                        btn.setRequestFocusEnabled(false);
+                        if (me.getID() == MouseEvent.MOUSE_RELEASED || me.getID() == MouseEvent.MOUSE_CLICKED) {
+                            if (btn.isFocusOwner()) {
+                                KeyboardFocusManager.getCurrentKeyboardFocusManager().clearGlobalFocusOwner();
+                            }
+                        }
+                    }
+                }
+            }, AWTEvent.MOUSE_EVENT_MASK);
+
+            Toolkit.getDefaultToolkit().addAWTEventListener(event -> {
+                if (event instanceof HierarchyEvent he) {
+                    if ((he.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) != 0 && he.getComponent().isShowing()) {
+                        desactivarFocoBotones(he.getComponent());
+                    }
+                }
+            }, AWTEvent.HIERARCHY_EVENT_MASK);
+        } catch (Exception e) {
+            System.err.println("Error configurando comportamiento de foco en botones: " + e.getMessage());
+        }
+    }
+
+    private static void desactivarFocoBotones(Component comp) {
+        if (comp instanceof AbstractButton btn) {
+            btn.setFocusPainted(false);
+            btn.setRequestFocusEnabled(false);
+        }
+        if (comp instanceof Container cont) {
+            for (Component child : cont.getComponents()) {
+                desactivarFocoBotones(child);
+            }
+        }
     }
 }

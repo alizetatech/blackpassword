@@ -36,10 +36,18 @@ public class FramePrincipal extends javax.swing.JFrame {
     private static List<Image> appIconImages = null;
 
     public FramePrincipal() {
-        // CAPA DE INYECCIÓN 2: Refuerzo de tema
         if (!(UIManager.getLookAndFeel() instanceof FlatLaf)) {
             FlatLightLaf.setup();
         }
+        UIManager.put("Button.focusPainted", Boolean.FALSE);
+        UIManager.put("ToggleButton.focusPainted", Boolean.FALSE);
+        UIManager.put("Button.showFocusOwner", Boolean.FALSE);
+        UIManager.put("Button.focusWidth", 0);
+        UIManager.put("Button.innerFocusWidth", 0);
+        UIManager.put("Button.focusedBorderColor", null);
+        UIManager.put("Button.default.focusedBorderColor", null);
+        UIManager.put("Button.focusedBackground", null);
+        UIManager.put("Button.default.focusedBackground", null);
         
         setupAppIcon();
         cargarImagenFondo();
@@ -221,6 +229,15 @@ public class FramePrincipal extends javax.swing.JFrame {
         FlatAnimatedLafChange.showSnapshot();
         try {
             UIManager.setLookAndFeel(laf);
+            UIManager.put("Button.focusPainted", Boolean.FALSE);
+            UIManager.put("ToggleButton.focusPainted", Boolean.FALSE);
+            UIManager.put("Button.showFocusOwner", Boolean.FALSE);
+            UIManager.put("Button.focusWidth", 0);
+            UIManager.put("Button.innerFocusWidth", 0);
+            UIManager.put("Button.focusedBorderColor", null);
+            UIManager.put("Button.default.focusedBorderColor", null);
+            UIManager.put("Button.focusedBackground", null);
+            UIManager.put("Button.default.focusedBackground", null);
             FlatLaf.updateUI();
             SwingUtilities.updateComponentTreeUI(this);
             FlatAnimatedLafChange.hideSnapshotWithAnimation();
