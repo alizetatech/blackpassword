@@ -66,7 +66,7 @@ public class BilleteraDogecoin extends JInternalFrame {
 
     private void initComponentsCustom() {
         setLayout(new BorderLayout());
-        setPreferredSize(new Dimension(880, 700));
+        setPreferredSize(new Dimension(940, 700));
 
         // --- BARRA SUPERIOR CON SELECTOR DE RED ---
         JPanel topBar = new JPanel(new BorderLayout());
@@ -112,8 +112,8 @@ public class BilleteraDogecoin extends JInternalFrame {
 
         btnRefreshAll = new JButton("🔄");
         btnRefreshAll.setToolTipText("Actualizar balance y transacciones");
-        btnRefreshAll.setPreferredSize(new Dimension(36, 36));
-        btnRefreshAll.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #FEF3C7; foreground: #B45309; font: bold 13");
+        btnRefreshAll.setPreferredSize(new Dimension(38, 36));
+        btnRefreshAll.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #FEF3C7; foreground: #B45309; font: bold 13; margin: 4,8,4,8");
         btnRefreshAll.addActionListener(e -> refrescarDatosEnSegundoPlano());
         netPanel.add(btnRefreshAll);
 
@@ -203,24 +203,24 @@ public class BilleteraDogecoin extends JInternalFrame {
         gbc.insets = new Insets(0, 0, 30, 0); gbc.gridy = row++;
         p.add(lblDesc, gbc);
 
-        JPanel btnGroup = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 0));
+        JPanel btnGroup = new JPanel(new FlowLayout(FlowLayout.CENTER, 16, 0));
         btnGroup.setOpaque(false);
 
-        JButton btnCrear = new JButton("✨ CREAR NUEVA BILLETERA DOGE");
-        btnCrear.setPreferredSize(new Dimension(245, 46));
-        btnCrear.putClientProperty(FlatClientProperties.STYLE, "arc: 14; background: #D97706; foreground: #FFFFFF; font: bold 13");
+        JButton btnCrear = new JButton("✨ CREAR BILLETERA");
+        btnCrear.setPreferredSize(new Dimension(220, 48));
+        btnCrear.putClientProperty(FlatClientProperties.STYLE, "arc: 14; background: #D97706; foreground: #FFFFFF; font: bold 13; margin: 8,16,8,16");
         btnCrear.addActionListener(e -> crearNuevaBilleteraFlujo());
         btnGroup.add(btnCrear);
 
-        JButton btnRestaurar = new JButton("📥 RESTAURAR DESDE 12 PALABRAS");
-        btnRestaurar.setPreferredSize(new Dimension(245, 46));
-        btnRestaurar.putClientProperty(FlatClientProperties.STYLE, "arc: 14; background: #FFFFFF; foreground: #333333; font: bold 13; border: 1,1,1,1,#D5CCA8");
+        JButton btnRestaurar = new JButton("📥 RESTAURAR BILLETERA");
+        btnRestaurar.setPreferredSize(new Dimension(230, 48));
+        btnRestaurar.putClientProperty(FlatClientProperties.STYLE, "arc: 14; background: #FFFFFF; foreground: #333333; font: bold 13; border: 1,1,1,1,#D5CCA8; margin: 8,16,8,16");
         btnRestaurar.addActionListener(e -> restaurarBilleteraFlujo());
         btnGroup.add(btnRestaurar);
 
-        JButton btnBoveda = new JButton("🔐 BÓVEDA DE SEMILLAS (NUBE)");
-        btnBoveda.setPreferredSize(new Dimension(240, 46));
-        btnBoveda.putClientProperty(FlatClientProperties.STYLE, "arc: 14; background: #78350F; foreground: #FFFFFF; font: bold 13");
+        JButton btnBoveda = new JButton("🔐 BÓVEDA DE SEMILLAS");
+        btnBoveda.setPreferredSize(new Dimension(230, 48));
+        btnBoveda.putClientProperty(FlatClientProperties.STYLE, "arc: 14; background: #78350F; foreground: #FFFFFF; font: bold 13; margin: 8,16,8,16");
         btnBoveda.addActionListener(e -> mostrarDialogoBovedaSemillas());
         btnGroup.add(btnBoveda);
 
@@ -322,7 +322,7 @@ public class BilleteraDogecoin extends JInternalFrame {
         btnRow.setOpaque(false);
 
         JButton btnCopy = new JButton("📋 COPIAR DIRECCIÓN");
-        btnCopy.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #D97706; foreground: #FFFFFF; font: bold 12");
+        btnCopy.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #D97706; foreground: #FFFFFF; font: bold 12; margin: 8,16,8,16");
         btnCopy.addActionListener(e -> {
             Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(txtMainAddress.getText()), null);
             ToastNotification.show(this, "Dirección Dogecoin copiada.", ToastNotification.Type.SUCCESS);
@@ -330,7 +330,7 @@ public class BilleteraDogecoin extends JInternalFrame {
         btnRow.add(btnCopy);
 
         JButton btnNewAddr = new JButton("➕ GENERAR NUEVA DIRECCIÓN");
-        btnNewAddr.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #FEF3C7; foreground: #92400E; font: bold 12");
+        btnNewAddr.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #FEF3C7; foreground: #92400E; font: bold 12; margin: 8,16,8,16");
         btnNewAddr.addActionListener(e -> generarNuevaDireccionFlujo());
         btnRow.add(btnNewAddr);
 
@@ -360,18 +360,18 @@ public class BilleteraDogecoin extends JInternalFrame {
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         actions.setOpaque(false);
 
-        JButton btnAddCustom = new JButton("🏷️ AGREGAR DIRECCIÓN CON TÍTULO");
-        btnAddCustom.putClientProperty(FlatClientProperties.STYLE, "arc: 10; font: bold 12; background: #D97706; foreground: #FFFFFF");
+        JButton btnAddCustom = new JButton("🏷️ AGREGAR DIRECCIÓN");
+        btnAddCustom.putClientProperty(FlatClientProperties.STYLE, "arc: 10; font: bold 12; background: #D97706; foreground: #FFFFFF; margin: 6,14,6,14");
         btnAddCustom.addActionListener(e -> agregarDireccionEtiquetadaFlujo());
         actions.add(btnAddCustom);
 
         JButton btnCopySel = new JButton("📋 COPIAR");
-        btnCopySel.putClientProperty(FlatClientProperties.STYLE, "arc: 10; font: bold 12; background: #FEF3C7; foreground: #92400E");
+        btnCopySel.putClientProperty(FlatClientProperties.STYLE, "arc: 10; font: bold 12; background: #FEF3C7; foreground: #92400E; margin: 6,14,6,14");
         btnCopySel.addActionListener(e -> copiarDireccionSeleccionada());
         actions.add(btnCopySel);
 
         JButton btnDeleteSel = new JButton("🗑️ ELIMINAR");
-        btnDeleteSel.putClientProperty(FlatClientProperties.STYLE, "arc: 10; font: bold 12; background: #FEE2E2; foreground: #991B1B");
+        btnDeleteSel.putClientProperty(FlatClientProperties.STYLE, "arc: 10; font: bold 12; background: #FEE2E2; foreground: #991B1B; margin: 6,14,6,14");
         btnDeleteSel.addActionListener(e -> eliminarDireccionSeleccionada());
         actions.add(btnDeleteSel);
 
@@ -408,12 +408,12 @@ public class BilleteraDogecoin extends JInternalFrame {
         JPanel header = new JPanel(new BorderLayout());
         header.setOpaque(false);
 
-        JLabel lblTitle = new JLabel("Historial de Transacciones de la Billetera Dogecoin (En Mempool & Confirmadas)");
+        JLabel lblTitle = new JLabel("Historial de Transacciones (Mempool y Confirmadas)");
         lblTitle.putClientProperty(FlatClientProperties.STYLE, "font: 12; foreground: #786D55");
         header.add(lblTitle, BorderLayout.WEST);
 
         JButton btnRefrescarTxs = new JButton("🔄 REFRESCAR TRANSACCIONES");
-        btnRefrescarTxs.putClientProperty(FlatClientProperties.STYLE, "arc: 10; font: bold 11; background: #FEF3C7; foreground: #92400E");
+        btnRefrescarTxs.putClientProperty(FlatClientProperties.STYLE, "arc: 10; font: bold 11; background: #FEF3C7; foreground: #92400E; margin: 6,14,6,14");
         btnRefrescarTxs.addActionListener(e -> refrescarTransaccionesEnSegundoPlano());
         header.add(btnRefrescarTxs, BorderLayout.EAST);
 
@@ -479,18 +479,18 @@ public class BilleteraDogecoin extends JInternalFrame {
         JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         tools.setOpaque(false);
 
-        JButton btnGuardarActual = new JButton("💾 GUARDAR EN LA NUBE");
-        btnGuardarActual.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #D97706; foreground: #FFFFFF; font: bold 12");
+        JButton btnGuardarActual = new JButton("💾 GUARDAR EN NUBE");
+        btnGuardarActual.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #D97706; foreground: #FFFFFF; font: bold 12; margin: 6,12,6,12");
         btnGuardarActual.addActionListener(e -> guardarSemillaActualEnNubeFlujo());
         tools.add(btnGuardarActual);
 
-        JButton btnGuardarManual = new JButton("➕ GUARDAR OTRA SEMILLA");
-        btnGuardarManual.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #FFFFFF; foreground: #334155; font: bold 12; border: 1,1,1,1,#CBD5E1");
+        JButton btnGuardarManual = new JButton("➕ OTRA SEMILLA");
+        btnGuardarManual.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #FFFFFF; foreground: #334155; font: bold 12; border: 1,1,1,1,#CBD5E1; margin: 6,12,6,12");
         btnGuardarManual.addActionListener(e -> guardarSemillaManualEnNubeFlujo());
         tools.add(btnGuardarManual);
 
         JButton btnRefrescar = new JButton("🔄 ACTUALIZAR");
-        btnRefrescar.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #F1F5F9; font: bold 12");
+        btnRefrescar.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #F1F5F9; font: bold 12; margin: 6,12,6,12");
         btnRefrescar.addActionListener(e -> cargarTablaSemillas());
         tools.add(btnRefrescar);
 
@@ -519,18 +519,18 @@ public class BilleteraDogecoin extends JInternalFrame {
         JPanel bottom = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 0));
         bottom.setOpaque(false);
 
-        JButton btnVerSemilla = new JButton("👁️ REVELAR SEMILLA (12 PALABRAS)");
-        btnVerSemilla.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #FEF3C7; foreground: #92400E; font: bold 12");
+        JButton btnVerSemilla = new JButton("👁️ REVELAR SEMILLA");
+        btnVerSemilla.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #FEF3C7; foreground: #92400E; font: bold 12; margin: 6,14,6,14");
         btnVerSemilla.addActionListener(e -> revelarSemillaSeleccionada());
         bottom.add(btnVerSemilla);
 
-        JButton btnRestaurarSeleccion = new JButton("🚀 RESTAURAR COMO ACTIVA");
-        btnRestaurarSeleccion.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #D1FAE5; foreground: #065F46; font: bold 12");
+        JButton btnRestaurarSeleccion = new JButton("🚀 RESTAURAR ACTIVA");
+        btnRestaurarSeleccion.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #D1FAE5; foreground: #065F46; font: bold 12; margin: 6,14,6,14");
         btnRestaurarSeleccion.addActionListener(e -> restaurarSemillaSeleccionada());
         bottom.add(btnRestaurarSeleccion);
 
-        JButton btnBorrarSemilla = new JButton("🗑️ ELIMINAR DE LA NUBE");
-        btnBorrarSemilla.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #FEE2E2; foreground: #991B1B; font: bold 12");
+        JButton btnBorrarSemilla = new JButton("🗑️ ELIMINAR DE NUBE");
+        btnBorrarSemilla.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #FEE2E2; foreground: #991B1B; font: bold 12; margin: 6,14,6,14");
         btnBorrarSemilla.addActionListener(e -> eliminarSemillaSeleccionada());
         bottom.add(btnBorrarSemilla);
 
@@ -563,7 +563,7 @@ public class BilleteraDogecoin extends JInternalFrame {
         panel.setBorder(BorderFactory.createEmptyBorder(25, 30, 25, 30));
 
         GridBagConstraints gbc = new GridBagConstraints();
-        gbc.gridx = 0; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = 1.0;
+        gbc.gridx = 0; gbc.anchor = GridBagConstraints.WEST; gbc.weightx = 1.0;
         int r = 0;
 
         JLabel title = new JLabel("Operaciones Críticas de Seguridad de la Billetera Dogecoin");
@@ -576,32 +576,34 @@ public class BilleteraDogecoin extends JInternalFrame {
         gbc.insets = new Insets(0, 0, 25, 0); gbc.gridy = r++;
         panel.add(desc, gbc);
 
-        JButton btnVerSemillaActual = new JButton("👁️ REVELAR FRASE SEMILLA MNEMÓNICA (12 PALABRAS)");
-        btnVerSemillaActual.setPreferredSize(new Dimension(380, 44));
-        btnVerSemillaActual.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #FEF3C7; foreground: #92400E; font: bold 13");
+        JButton btnVerSemillaActual = new JButton("👁️ REVELAR FRASE SEMILLA (12 PALABRAS)");
+        btnVerSemillaActual.setPreferredSize(new Dimension(440, 46));
+        btnVerSemillaActual.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #FEF3C7; foreground: #92400E; font: bold 13; margin: 8,20,8,20");
         btnVerSemillaActual.addActionListener(e -> revelarSemillaActualFlujo());
         gbc.insets = new Insets(0, 0, 15, 0); gbc.gridy = r++;
         panel.add(btnVerSemillaActual, gbc);
 
-        JButton btnGuardarNube = new JButton("💾 GUARDAR SEMILLA EN LA NUBE (CON CÓDIGO)");
-        btnGuardarNube.setPreferredSize(new Dimension(380, 44));
-        btnGuardarNube.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #FEF9C3; foreground: #854D0E; font: bold 13");
+        JButton btnGuardarNube = new JButton("💾 RESPALDAR SEMILLA EN LA NUBE (FIREBASE)");
+        btnGuardarNube.setPreferredSize(new Dimension(440, 46));
+        btnGuardarNube.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #FEF9C3; foreground: #854D0E; font: bold 13; margin: 8,20,8,20");
         btnGuardarNube.addActionListener(e -> guardarSemillaActualEnNubeFlujo());
         gbc.insets = new Insets(0, 0, 25, 0); gbc.gridy = r++;
         panel.add(btnGuardarNube, gbc);
 
         JSeparator sep = new JSeparator();
+        gbc.fill = GridBagConstraints.HORIZONTAL;
         gbc.insets = new Insets(0, 0, 25, 0); gbc.gridy = r++;
         panel.add(sep, gbc);
+        gbc.fill = GridBagConstraints.NONE;
 
         JLabel lblWarn = new JLabel("Zona de Peligro: Destrucción de Llaves");
         lblWarn.putClientProperty(FlatClientProperties.STYLE, "font: bold 13; foreground: #DC2626");
         gbc.insets = new Insets(0, 0, 8, 0); gbc.gridy = r++;
         panel.add(lblWarn, gbc);
 
-        JButton btnEliminar = new JButton("🗑️ DESTRUIR Y ELIMINAR BILLETERA DOGECOIN PERMANENTEMENTE");
-        btnEliminar.setPreferredSize(new Dimension(380, 44));
-        btnEliminar.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #DC2626; foreground: #FFFFFF; font: bold 13");
+        JButton btnEliminar = new JButton("🗑️ DESTRUIR Y ELIMINAR BILLETERA DOGECOIN");
+        btnEliminar.setPreferredSize(new Dimension(440, 46));
+        btnEliminar.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #DC2626; foreground: #FFFFFF; font: bold 13; margin: 8,20,8,20");
         btnEliminar.addActionListener(e -> eliminarBilleteraFlujo());
         gbc.insets = new Insets(0, 0, 0, 0); gbc.gridy = r++;
         panel.add(btnEliminar, gbc);
@@ -1053,7 +1055,7 @@ public class BilleteraDogecoin extends JInternalFrame {
     private void mostrarVentanaPalabrasSemilla(List<String> palabras, String titulo, Runnable onFinish) {
         JDialog dlg = new JDialog(SwingUtilities.getWindowAncestor(this), titulo, JDialog.ModalityType.APPLICATION_MODAL);
         dlg.setLayout(new BorderLayout());
-        dlg.setSize(580, 480);
+        dlg.setSize(620, 500);
         dlg.setLocationRelativeTo(this);
 
         JPanel p = new JPanel(new BorderLayout(0, 15));
@@ -1077,7 +1079,7 @@ public class BilleteraDogecoin extends JInternalFrame {
         bottom.setOpaque(false);
 
         JButton btnCopy = new JButton("📋 COPIAR");
-        btnCopy.putClientProperty(FlatClientProperties.STYLE, "arc: 10; font: bold 12");
+        btnCopy.putClientProperty(FlatClientProperties.STYLE, "arc: 10; font: bold 12; margin: 6,14,6,14");
         btnCopy.addActionListener(e -> {
             Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(String.join(" ", palabras)), null);
             ToastNotification.show(dlg, "Palabras copiadas al portapapeles.", ToastNotification.Type.SUCCESS);
@@ -1085,7 +1087,7 @@ public class BilleteraDogecoin extends JInternalFrame {
         bottom.add(btnCopy);
 
         JButton btnClose = new JButton("HE RESPALDADO MI SEMILLA");
-        btnClose.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #D97706; foreground: #FFFFFF; font: bold 12");
+        btnClose.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #D97706; foreground: #FFFFFF; font: bold 12; margin: 8,18,8,18");
         btnClose.addActionListener(e -> {
             dlg.dispose();
             if (onFinish != null) onFinish.run();
@@ -1100,7 +1102,7 @@ public class BilleteraDogecoin extends JInternalFrame {
     private void mostrarDialogoBovedaSemillas() {
         JDialog dlg = new JDialog(SwingUtilities.getWindowAncestor(this), "Bóveda de Semillas Dogecoin (Nube Firebase & BD)", JDialog.ModalityType.APPLICATION_MODAL);
         dlg.setLayout(new BorderLayout());
-        dlg.setSize(880, 520);
+        dlg.setSize(960, 540);
         dlg.setLocationRelativeTo(this);
         dlg.add(crearPanelBovedaSemillas(), BorderLayout.CENTER);
         dlg.setVisible(true);

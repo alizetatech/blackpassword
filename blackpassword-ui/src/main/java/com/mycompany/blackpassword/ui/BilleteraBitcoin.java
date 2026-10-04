@@ -215,24 +215,24 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
         gbc.insets = new Insets(0, 0, 30, 0); gbc.gridy = row++;
         p.add(lblDesc, gbc);
 
-        JPanel btnGroup = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 0));
+        JPanel btnGroup = new JPanel(new FlowLayout(FlowLayout.CENTER, 16, 0));
         btnGroup.setOpaque(false);
 
         JButton btnCrear = new JButton("✨ CREAR NUEVA BILLETERA");
-        btnCrear.setPreferredSize(new Dimension(220, 46));
-        btnCrear.putClientProperty(FlatClientProperties.STYLE, "arc: 14; background: #0078D4; foreground: #FFFFFF; font: bold 13");
+        btnCrear.setPreferredSize(new Dimension(230, 46));
+        btnCrear.putClientProperty(FlatClientProperties.STYLE, "arc: 14; background: #0078D4; foreground: #FFFFFF; font: bold 13; margin: 8,16,8,16");
         btnCrear.addActionListener(e -> crearNuevaBilleteraFlujo());
         btnGroup.add(btnCrear);
 
-        JButton btnRestaurar = new JButton("📥 RESTAURAR DESDE 12 PALABRAS");
-        btnRestaurar.setPreferredSize(new Dimension(240, 46));
-        btnRestaurar.putClientProperty(FlatClientProperties.STYLE, "arc: 14; background: #FFFFFF; foreground: #333333; font: bold 13; border: 1,1,1,1,#CCCCCC");
+        JButton btnRestaurar = new JButton("📥 RESTAURAR BILLETERA");
+        btnRestaurar.setPreferredSize(new Dimension(230, 46));
+        btnRestaurar.putClientProperty(FlatClientProperties.STYLE, "arc: 14; background: #FFFFFF; foreground: #333333; font: bold 13; border: 1,1,1,1,#CCCCCC; margin: 8,16,8,16");
         btnRestaurar.addActionListener(e -> restaurarBilleteraFlujo());
         btnGroup.add(btnRestaurar);
 
-        JButton btnBoveda = new JButton("🔐 BÓVEDA DE SEMILLAS (NUBE)");
-        btnBoveda.setPreferredSize(new Dimension(240, 46));
-        btnBoveda.putClientProperty(FlatClientProperties.STYLE, "arc: 14; background: #6B21A8; foreground: #FFFFFF; font: bold 13");
+        JButton btnBoveda = new JButton("🔐 BÓVEDA DE SEMILLAS");
+        btnBoveda.setPreferredSize(new Dimension(230, 46));
+        btnBoveda.putClientProperty(FlatClientProperties.STYLE, "arc: 14; background: #6B21A8; foreground: #FFFFFF; font: bold 13; margin: 8,16,8,16");
         btnBoveda.addActionListener(e -> mostrarDialogoBovedaSemillas());
         btnGroup.add(btnBoveda);
 
@@ -687,22 +687,22 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
         panel.add(lblDesc, gbc);
 
         JButton btnGuardarBd = new JButton("💾 GUARDAR SEMILLA EN BD (CON CÓDIGO)");
-        btnGuardarBd.setPreferredSize(new Dimension(340, 44));
-        btnGuardarBd.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #E0E7FF; foreground: #3730A3; font: bold 13");
+        btnGuardarBd.setPreferredSize(new Dimension(420, 46));
+        btnGuardarBd.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #E0E7FF; foreground: #3730A3; font: bold 13; margin: 8,18,8,18");
         btnGuardarBd.addActionListener(e -> guardarSemillaActualEnBdFlujo());
         gbc.insets = new Insets(0, 0, 15, 0); gbc.gridy = r++;
         panel.add(btnGuardarBd, gbc);
 
         JButton btnSemilla = new JButton("🔑 REVELAR FRASE SEMILLA (12 PALABRAS)");
-        btnSemilla.setPreferredSize(new Dimension(340, 44));
-        btnSemilla.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #FFF4CE; foreground: #795B00; font: bold 13");
+        btnSemilla.setPreferredSize(new Dimension(420, 46));
+        btnSemilla.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #FFF4CE; foreground: #795B00; font: bold 13; margin: 8,18,8,18");
         btnSemilla.addActionListener(e -> revelarSemillaConPin());
         gbc.insets = new Insets(0, 0, 15, 0); gbc.gridy = r++;
         panel.add(btnSemilla, gbc);
 
         JButton btnEliminar = new JButton("🗑️ DESTRUIR BILLETERA LOCAL DE FORMA SEGURA");
-        btnEliminar.setPreferredSize(new Dimension(340, 44));
-        btnEliminar.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #FDE7E9; foreground: #A80000; font: bold 13");
+        btnEliminar.setPreferredSize(new Dimension(420, 46));
+        btnEliminar.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #FDE7E9; foreground: #A80000; font: bold 13; margin: 8,18,8,18");
         btnEliminar.addActionListener(e -> eliminarBilleteraSeguraConPin());
         gbc.insets = new Insets(0, 0, 0, 0); gbc.gridy = r++;
         panel.add(btnEliminar, gbc);
