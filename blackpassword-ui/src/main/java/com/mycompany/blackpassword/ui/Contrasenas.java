@@ -31,8 +31,10 @@ import java.awt.image.BufferedImage;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import javax.swing.BorderFactory;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
@@ -480,6 +482,42 @@ public class Contrasenas extends javax.swing.JInternalFrame {
         });
     }
 
+    public boolean existeCredencial(String service, String username, String excludeDocId) {
+        if (service == null || username == null) return false;
+        String s = service.trim().toUpperCase();
+        String u = username.trim().toLowerCase();
+        for (Map<String, Object> doc : secretDocumentsRaw) {
+            String docId = (String) doc.get("id");
+            if (excludeDocId != null && excludeDocId.equals(docId)) {
+                continue;
+            }
+            String existingService = String.valueOf(doc.getOrDefault("service", "")).trim().toUpperCase();
+            String existingUser = String.valueOf(doc.getOrDefault("username", "")).trim().toLowerCase();
+            if (s.equals(existingService) && u.equals(existingUser)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public Map<String, Object> buscarCredencial(String service, String username, String excludeDocId) {
+        if (service == null || username == null) return null;
+        String s = service.trim().toUpperCase();
+        String u = username.trim().toLowerCase();
+        for (Map<String, Object> doc : secretDocumentsRaw) {
+            String docId = (String) doc.get("id");
+            if (excludeDocId != null && excludeDocId.equals(docId)) {
+                continue;
+            }
+            String existingService = String.valueOf(doc.getOrDefault("service", "")).trim().toUpperCase();
+            String existingUser = String.valueOf(doc.getOrDefault("username", "")).trim().toLowerCase();
+            if (s.equals(existingService) && u.equals(existingUser)) {
+                return doc;
+            }
+        }
+        return null;
+    }
+
     private void saveSecret() {
         validarIntegridad();
         String s = txtService.getText().trim();
@@ -489,6 +527,42 @@ public class Contrasenas extends javax.swing.JInternalFrame {
         if (s.isEmpty() || u.isEmpty() || p.length == 0) {
             ToastNotification.show(this, "Complete todos los campos.", ToastNotification.Type.WARNING);
             return;
+        }
+
+        // CONTROL DE DUPLICADOS: Evitar que se repita (Sitio + Usuario)
+        if (existeCredencial(s, u, null)) {
+            int opc = JOptionPane.showConfirmDialog(this,
+                "⚠️ CREDENCIAL YA REGISTRADA:\n\n" +
+                "Ya existe una credencial guardada en la base de datos para:\n" +
+                "• Sitio / Servicio: " + s.toUpperCase() + "\n" +
+                "• Usuario / Email:  " + u + "\n\n" +
+                "¿Desea sobrescribir y actualizar la contraseña existente con esta nueva?\n" +
+                "(Presione 'No' para cancelar y evitar duplicar el registro)",
+                "Aviso de Credencial Duplicada",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE);
+
+            if (opc != JOptionPane.YES_OPTION) {
+                return;
+            }
+
+            Map<String, Object> existente = buscarCredencial(s, u, null);
+            if (existente != null) {
+                String firestoreDocId = (String) existente.get("id");
+                VaultManager.updateSecret(userEmail, firestoreDocId, s, s, u, p).thenAccept(success -> {
+                    java.awt.EventQueue.invokeLater(() -> {
+                        if (success) {
+                            ToastNotification.show(this, "Credencial existente actualizada con éxito", ToastNotification.Type.SUCCESS);
+                            AuditService.log(userEmail, "VAULT_UPDATE_DUPLICATE", "Actualizado: " + s + " (" + u + ")");
+                            txtService.setText(""); txtUsername.setText(""); txtPassword.setText("");
+                            loadSecretsFromFirebase();
+                        } else {
+                            ToastNotification.show(this, "Error al actualizar", ToastNotification.Type.ERROR);
+                        }
+                    });
+                });
+                return;
+            }
         }
 
         VaultManager.saveSecret(userEmail, s, u, p).thenAccept(success -> {
@@ -685,6 +759,15 @@ public class Contrasenas extends javax.swing.JInternalFrame {
 
             if (newService.isEmpty() || newUser.isEmpty() || newPass.length == 0) {
                 JOptionPane.showMessageDialog(editDialog, "Todos los campos son obligatorios.", "Advertencia", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+
+            // Validar que no choque con otra credencial existente (excluyendo el doc actual)
+            if (existeCredencial(newService, newUser, firestoreDocId)) {
+                JOptionPane.showMessageDialog(editDialog,
+                    "⚠️ Ya existe otra credencial registrada para el sitio '" + newService + "' con el usuario '" + newUser + "'.\n" +
+                    "No se pueden repetir el mismo sitio y usuario.",
+                    "Credencial Duplicada", JOptionPane.WARNING_MESSAGE);
                 return;
             }
 
@@ -905,23 +988,110 @@ public class Contrasenas extends javax.swing.JInternalFrame {
             List<Map<String, String>> allCredentials = com.mycompany.blackpassword.services.ExportService.parseCsv(content);
             if (allCredentials.isEmpty()) throw new Exception("No se encontraron registros válidos en el archivo.");
 
-            // Abrir el diálogo interactivo de vista previa
-            ImportPreviewDialog preview = new ImportPreviewDialog(javax.swing.SwingUtilities.getWindowAncestor(this), allCredentials);
+            // Recolectar llaves existentes de la bóveda para detectar duplicados
+            Set<String> existingKeys = new HashSet<>();
+            if (secretDocumentsRaw != null) {
+                for (Map<String, Object> doc : secretDocumentsRaw) {
+                    String s = (String) doc.get("service");
+                    String u = (String) doc.get("username");
+                    if (s != null && u != null) {
+                        existingKeys.add(s.trim().toUpperCase() + "|||" + u.trim().toLowerCase());
+                    }
+                }
+            }
+
+            // Abrir el diálogo interactivo de vista previa con detección de duplicados
+            ImportPreviewDialog preview = new ImportPreviewDialog(javax.swing.SwingUtilities.getWindowAncestor(this), allCredentials, existingKeys);
             preview.setVisible(true);
 
             if (preview.isConfirmed()) {
                 List<Map<String, String>> selectedCredentials = preview.getSelectedData();
-                int count = 0;
+                if (selectedCredentials.isEmpty()) {
+                    ToastNotification.show(this, "No se seleccionó ninguna credencial para importar.", ToastNotification.Type.WARNING);
+                    if (pass != null) java.util.Arrays.fill(pass, '0');
+                    return;
+                }
+
+                // Clasificar en nuevos vs ya existentes
+                List<Map<String, String>> toInsert = new ArrayList<>();
+                List<Map<String, String>> toUpdate = new ArrayList<>();
+
                 for (Map<String, String> cred : selectedCredentials) {
+                    String s = cred.get("s");
+                    String u = cred.get("u");
+                    if (existeCredencial(s, u, null)) {
+                        toUpdate.add(cred);
+                    } else {
+                        toInsert.add(cred);
+                    }
+                }
+
+                boolean overwriteDuplicates = false;
+                if (!toUpdate.isEmpty()) {
+                    String msg = "⚠️ ATENCIÓN: " + toUpdate.size() + " de las credenciales seleccionadas ya existen en la Bóveda.\n\n" +
+                                 "¿Qué desea hacer con los registros duplicados?\n" +
+                                 "• 'Sobrescribir / Actualizar': Actualiza las contraseñas existentes con los datos importados.\n" +
+                                 "• 'Omitir Duplicados': Solo importa los " + toInsert.size() + " registros nuevos y descarta los duplicados.\n" +
+                                 "• 'Cancelar': Cancela toda la operación de importación.";
+
+                    Object[] options = {"Sobrescribir / Actualizar", "Omitir Duplicados", "Cancelar"};
+                    int choice = JOptionPane.showOptionDialog(
+                        this,
+                        msg,
+                        "Detección de Duplicados en Importación",
+                        JOptionPane.YES_NO_CANCEL_OPTION,
+                        JOptionPane.WARNING_MESSAGE,
+                        null,
+                        options,
+                        options[1]
+                    );
+
+                    if (choice == 0) {
+                        overwriteDuplicates = true;
+                    } else if (choice == 1) {
+                        overwriteDuplicates = false;
+                    } else {
+                        if (pass != null) java.util.Arrays.fill(pass, '0');
+                        return;
+                    }
+                }
+
+                int countSaved = 0;
+                int countUpdated = 0;
+
+                // Importar los nuevos
+                for (Map<String, String> cred : toInsert) {
                     String s = cred.get("s");
                     String u = cred.get("u");
                     char[] p = cred.get("p").toCharArray();
                     VaultManager.saveSecret(userEmail, s, u, p);
-                    count++;
+                    java.util.Arrays.fill(p, '0');
+                    countSaved++;
                 }
 
-                ToastNotification.show(this, "Importación exitosa: " + count + " registros guardados.", ToastNotification.Type.SUCCESS);
-                AuditService.log(userEmail, "VAULT_IMPORT_STAGED", "Importados " + count + " de " + allCredentials.size() + " desde " + name);
+                // Actualizar duplicados si fue aprobado por el usuario
+                if (overwriteDuplicates) {
+                    for (Map<String, String> cred : toUpdate) {
+                        String s = cred.get("s");
+                        String u = cred.get("u");
+                        char[] p = cred.get("p").toCharArray();
+                        Map<String, Object> existingDoc = buscarCredencial(s, u, null);
+                        if (existingDoc != null) {
+                            String docId = (String) existingDoc.get("id");
+                            VaultManager.updateSecret(userEmail, docId, s, s, u, p);
+                            countUpdated++;
+                        }
+                        java.util.Arrays.fill(p, '0');
+                    }
+                }
+
+                String summary = "Importación finalizada: " + countSaved + " nuevos";
+                if (countUpdated > 0) summary += ", " + countUpdated + " actualizados.";
+                else summary += ".";
+
+                ToastNotification.show(this, summary, ToastNotification.Type.SUCCESS);
+                AuditService.log(userEmail, "VAULT_IMPORT_STAGED",
+                    "Nuevos: " + countSaved + ", Actualizados: " + countUpdated + ", Omitidos: " + (toUpdate.size() - countUpdated) + " desde " + name);
                 loadSecretsFromFirebase();
             }
 
