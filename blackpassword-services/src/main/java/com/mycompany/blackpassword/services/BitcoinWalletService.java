@@ -272,12 +272,39 @@ public class BitcoinWalletService {
     }
 
     /**
-     * Elimina la billetera de una red específica
+     * Elimina de forma segura la billetera de una red específica.
+     * Sobrescribe con ruido criptográfico antes de eliminar para impedir recuperación forense.
      */
     public static void eliminarBilletera(String userEmail, boolean testnet) {
         String key = getWalletKey(userEmail, testnet);
-        prefs.remove(PREF_WALLET_DATA + key);
-        prefs.remove(PREF_WALLET_TESTNET + key);
+        String prefData = PREF_WALLET_DATA + key;
+        String prefNet = PREF_WALLET_TESTNET + key;
+
+        byte[] junk = new byte[1024];
+        new SecureRandom().nextBytes(junk);
+        prefs.put(prefData, java.util.Base64.getEncoder().encodeToString(junk));
+        try {
+            prefs.flush();
+        } catch (Exception ignored) {}
+
+        prefs.remove(prefData);
+        prefs.remove(prefNet);
+
+        // Limpieza de clave legacy si existía
+        String legacyKey = userEmail.trim().toLowerCase();
+        boolean legacyIsTestnet = prefs.getBoolean(PREF_WALLET_TESTNET + legacyKey, true);
+        if (legacyIsTestnet == testnet) {
+            prefs.put(PREF_WALLET_DATA + legacyKey, java.util.Base64.getEncoder().encodeToString(junk));
+            try {
+                prefs.flush();
+            } catch (Exception ignored) {}
+            prefs.remove(PREF_WALLET_DATA + legacyKey);
+            prefs.remove(PREF_WALLET_TESTNET + legacyKey);
+        }
+
+        try {
+            prefs.flush();
+        } catch (Exception ignored) {}
     }
 
     public static boolean isTestnet(String userEmail) {

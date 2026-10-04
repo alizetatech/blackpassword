@@ -6,6 +6,8 @@ import com.mycompany.blackpassword.services.AuditService;
 import com.mycompany.blackpassword.services.BitcoinWalletService;
 import com.mycompany.blackpassword.services.BitcoinWalletService.BtcAddressEntry;
 import com.mycompany.blackpassword.services.BitcoinWalletService.BtcTxInfo;
+import com.mycompany.blackpassword.services.LocalDatabaseService;
+import com.mycompany.blackpassword.services.LocalDatabaseService.BtcSeedEntry;
 import com.mycompany.blackpassword.services.QRCodeService;
 import com.mycompany.blackpassword.services.SecuritySession;
 import java.awt.BorderLayout;
@@ -217,16 +219,22 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
         btnGroup.setOpaque(false);
 
         JButton btnCrear = new JButton("✨ CREAR NUEVA BILLETERA");
-        btnCrear.setPreferredSize(new Dimension(240, 46));
+        btnCrear.setPreferredSize(new Dimension(220, 46));
         btnCrear.putClientProperty(FlatClientProperties.STYLE, "arc: 14; background: #0078D4; foreground: #FFFFFF; font: bold 13");
         btnCrear.addActionListener(e -> crearNuevaBilleteraFlujo());
         btnGroup.add(btnCrear);
 
         JButton btnRestaurar = new JButton("📥 RESTAURAR DESDE 12 PALABRAS");
-        btnRestaurar.setPreferredSize(new Dimension(260, 46));
+        btnRestaurar.setPreferredSize(new Dimension(240, 46));
         btnRestaurar.putClientProperty(FlatClientProperties.STYLE, "arc: 14; background: #FFFFFF; foreground: #333333; font: bold 13; border: 1,1,1,1,#CCCCCC");
         btnRestaurar.addActionListener(e -> restaurarBilleteraFlujo());
         btnGroup.add(btnRestaurar);
+
+        JButton btnBoveda = new JButton("🔐 BÓVEDA DE SEMILLAS (BD)");
+        btnBoveda.setPreferredSize(new Dimension(240, 46));
+        btnBoveda.putClientProperty(FlatClientProperties.STYLE, "arc: 14; background: #6B21A8; foreground: #FFFFFF; font: bold 13");
+        btnBoveda.addActionListener(e -> mostrarDialogoBovedaSemillas());
+        btnGroup.add(btnBoveda);
 
         gbc.insets = new Insets(0, 0, 20, 0); gbc.gridy = row++;
         p.add(btnGroup, gbc);
@@ -245,6 +253,7 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
         tabbedPane.addTab("📊 RESUMEN & BALANCE", crearPanelResumen());
         tabbedPane.addTab("🏷️ DIRECCIONES & ETIQUETAS", crearPanelDirecciones());
         tabbedPane.addTab("📜 HISTORIAL DE TRANSACCIONES", crearPanelTransacciones());
+        tabbedPane.addTab("🔐 BÓVEDA DE SEMILLAS (BD)", crearPanelBovedaSemillas());
         tabbedPane.addTab("⚙️ SEGURIDAD", crearPanelSeguridad());
 
         contentContainer.add(tabbedPane, BorderLayout.CENTER);
@@ -677,17 +686,24 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
         gbc.insets = new Insets(0, 0, 25, 0); gbc.gridy = r++;
         panel.add(lblDesc, gbc);
 
+        JButton btnGuardarBd = new JButton("💾 GUARDAR SEMILLA EN BD (CON CÓDIGO)");
+        btnGuardarBd.setPreferredSize(new Dimension(340, 44));
+        btnGuardarBd.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #E0E7FF; foreground: #3730A3; font: bold 13");
+        btnGuardarBd.addActionListener(e -> guardarSemillaActualEnBdFlujo());
+        gbc.insets = new Insets(0, 0, 15, 0); gbc.gridy = r++;
+        panel.add(btnGuardarBd, gbc);
+
         JButton btnSemilla = new JButton("🔑 REVELAR FRASE SEMILLA (12 PALABRAS)");
-        btnSemilla.setPreferredSize(new Dimension(320, 44));
+        btnSemilla.setPreferredSize(new Dimension(340, 44));
         btnSemilla.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #FFF4CE; foreground: #795B00; font: bold 13");
         btnSemilla.addActionListener(e -> revelarSemillaConPin());
         gbc.insets = new Insets(0, 0, 15, 0); gbc.gridy = r++;
         panel.add(btnSemilla, gbc);
 
-        JButton btnEliminar = new JButton("🗑️ DESVINCULAR BILLETERA DE ESTA RED");
-        btnEliminar.setPreferredSize(new Dimension(320, 44));
+        JButton btnEliminar = new JButton("🗑️ DESTRUIR BILLETERA LOCAL DE FORMA SEGURA");
+        btnEliminar.setPreferredSize(new Dimension(340, 44));
         btnEliminar.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #FDE7E9; foreground: #A80000; font: bold 13");
-        btnEliminar.addActionListener(e -> desvincularBilleteraConPin());
+        btnEliminar.addActionListener(e -> eliminarBilleteraSeguraConPin());
         gbc.insets = new Insets(0, 0, 0, 0); gbc.gridy = r++;
         panel.add(btnEliminar, gbc);
 
@@ -839,14 +855,34 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
         JPanel bottom = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         bottom.setOpaque(false);
 
-        JButton btnCopy = new JButton("📋 COPIAR");
-        btnCopy.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #F3F3F3; font: bold 12");
-        btnCopy.addActionListener(e -> {
-            String full = String.join(" ", palabras);
-            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(full), null);
-            ToastNotification.show(dlg, "Palabras copiadas al portapapeles.", ToastNotification.Type.SUCCESS);
+        JButton btnGuardarBdModal = new JButton("💾 GUARDAR EN BD");
+        btnGuardarBdModal.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #E0E7FF; foreground: #3730A3; font: bold 12");
+        btnGuardarBdModal.addActionListener(e -> {
+            JTextField txtCod = new JTextField("WALLET-" + (isTestnet ? "TESTNET" : "MAINNET") + "-01");
+            JPasswordField pfP = new JPasswordField(4);
+            int opt = JOptionPane.showConfirmDialog(dlg,
+                new Object[]{"Código / Nombre para identificar en la BD:", txtCod, "PIN de autorización:", pfP},
+                "Guardar Semilla en Base de Datos", JOptionPane.OK_CANCEL_OPTION);
+            if (opt == JOptionPane.OK_OPTION) {
+                char[] pChars = pfP.getPassword();
+                char[] pCheck = Arrays.copyOf(pChars, pChars.length);
+                if (SecuritySession.hasUserPin() && !SecuritySession.verifyUserPin(pCheck)) {
+                    JOptionPane.showMessageDialog(dlg, "PIN incorrecto.", "Error", JOptionPane.ERROR_MESSAGE);
+                    Arrays.fill(pChars, '0');
+                    return;
+                }
+                String c = txtCod.getText().trim();
+                if (!c.isEmpty()) {
+                    String frase = String.join(" ", palabras);
+                    boolean ok = LocalDatabaseService.guardarSemillaWallet(userEmail, c, isTestnet ? "TESTNET" : "MAINNET", "", frase, pChars);
+                    if (ok) {
+                        ToastNotification.show(dlg, "Semilla guardada en BD con código: " + c.toUpperCase(), ToastNotification.Type.SUCCESS);
+                    }
+                }
+                Arrays.fill(pChars, '0');
+            }
         });
-        bottom.add(btnCopy);
+        bottom.add(btnGuardarBdModal);
 
         JButton btnEntendido = new JButton("HE ANOTADO MI FRASE");
         btnEntendido.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #0078D4; foreground: #FFFFFF; font: bold 13");
@@ -886,11 +922,13 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
         Arrays.fill(pin, '0');
     }
 
-    private void desvincularBilleteraConPin() {
+    private void eliminarBilleteraSeguraConPin() {
         int conf = JOptionPane.showConfirmDialog(this,
-                "⚠️ ¿Está completamente seguro de desvincular esta billetera (" + (isTestnet ? "Testnet" : "Mainnet") + ")?\n" +
-                "Si no anotó sus 12 palabras, PERDERÁ EL ACCESO A SUS FONDOS DE FORMA PERMANENTE.",
-                "Confirmación de Eliminación",
+                "⚠️ DESTRUCCIÓN SEGURA DE BILLETERA LOCAL (" + (isTestnet ? "Testnet" : "Mainnet") + ")\n\n" +
+                "Esta operación sobrescribirá criptográficamente las claves privadas almacenadas en este equipo\n" +
+                "y las eliminará de forma irreversible para prevenir recuperación forense.\n\n" +
+                "¿Se aseguró de respaldar su frase semilla o guardarla en la Bóveda de la Base de Datos antes de continuar?",
+                "Confirmación de Destrucción Segura",
                 JOptionPane.YES_NO_OPTION,
                 JOptionPane.WARNING_MESSAGE);
 
@@ -898,22 +936,409 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
 
         JPasswordField pfPin = new JPasswordField(4);
         int opc = JOptionPane.showConfirmDialog(this,
-                new Object[]{"Ingrese su PIN para confirmar la eliminación:", pfPin},
-                "Confirmación Crítica",
+                new Object[]{"Ingrese su PIN para autorizar la destrucción segura:", pfPin},
+                "Autorización Crítica",
                 JOptionPane.OK_CANCEL_OPTION);
 
         if (opc != JOptionPane.OK_OPTION) return;
         char[] pin = pfPin.getPassword();
+        char[] pinCheck = Arrays.copyOf(pin, pin.length);
 
-        if (SecuritySession.verifyUserPin(pin)) {
+        if (SecuritySession.hasUserPin() && !SecuritySession.verifyUserPin(pinCheck)) {
+            JOptionPane.showMessageDialog(this, "PIN incorrecto.", "Error", JOptionPane.ERROR_MESSAGE);
+            Arrays.fill(pin, '0');
+            return;
+        }
+
+        try {
             BitcoinWalletService.eliminarBilletera(userEmail, isTestnet);
             currentWallet = null;
+            System.gc();
             renderizarPantallaBienvenida();
-            ToastNotification.show(this, "Billetera (" + (isTestnet ? "Testnet" : "Mainnet") + ") desvinculada exitosamente.", ToastNotification.Type.SUCCESS);
-            AuditService.log(userEmail, "BTC_WALLET_DELETED", "Billetera eliminada por el usuario.");
-        } else {
-            JOptionPane.showMessageDialog(this, "PIN incorrecto.", "Error", JOptionPane.ERROR_MESSAGE);
+            ToastNotification.show(this, "Billetera (" + (isTestnet ? "Testnet" : "Mainnet") + ") destruida de forma segura.", ToastNotification.Type.SUCCESS);
+            AuditService.log(userEmail, "BTC_WALLET_SECURE_DESTROY", "Billetera local destruida con sobrescritura criptográfica.");
+        } finally {
+            Arrays.fill(pin, '0');
         }
-        Arrays.fill(pin, '0');
+    }
+
+    // --- PANEL 5: BÓVEDA DE SEMILLAS EN BASE DE DATOS ---
+
+    private DefaultTableModel seedTableModel;
+    private JTable tblSeeds;
+    private List<BtcSeedEntry> currentSeedList;
+
+    private JPanel crearPanelBovedaSemillas() {
+        JPanel p = new JPanel(new BorderLayout(0, 15));
+        p.setOpaque(false);
+        p.setBorder(BorderFactory.createEmptyBorder(20, 25, 20, 25));
+
+        // Cabecera informativa y barra de herramientas
+        JPanel top = new JPanel(new BorderLayout());
+        top.setOpaque(false);
+
+        JPanel info = new JPanel(new GridLayout(2, 1, 0, 4));
+        info.setOpaque(false);
+        JLabel title = new JLabel("BÓVEDA DE SEMILLAS CRIPTOGRÁFICAS (BASE DE DATOS LOCAL)");
+        title.putClientProperty(FlatClientProperties.STYLE, "font: bold 15; foreground: #1E293B");
+        JLabel desc = new JLabel("Frases semilla respaldadas en la tabla SQLite cifrada con AES-256 GCM. Identifique cada billetera con un código único.");
+        desc.putClientProperty(FlatClientProperties.STYLE, "font: 12; foreground: #64748B");
+        info.add(title);
+        info.add(desc);
+        top.add(info, BorderLayout.CENTER);
+
+        JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        tools.setOpaque(false);
+
+        JButton btnGuardarActual = new JButton("💾 GUARDAR ACTUAL EN BD");
+        btnGuardarActual.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #4F46E5; foreground: #FFFFFF; font: bold 12");
+        btnGuardarActual.addActionListener(e -> guardarSemillaActualEnBdFlujo());
+        tools.add(btnGuardarActual);
+
+        JButton btnGuardarManual = new JButton("➕ GUARDAR OTRA SEMILLA");
+        btnGuardarManual.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #FFFFFF; foreground: #334155; font: bold 12; border: 1,1,1,1,#CBD5E1");
+        btnGuardarManual.addActionListener(e -> guardarSemillaManualEnBdFlujo());
+        tools.add(btnGuardarManual);
+
+        JButton btnRefrescar = new JButton("🔄 ACTUALIZAR");
+        btnRefrescar.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #F1F5F9; font: bold 12");
+        btnRefrescar.addActionListener(e -> cargarTablaSemillas());
+        tools.add(btnRefrescar);
+
+        top.add(tools, BorderLayout.EAST);
+        p.add(top, BorderLayout.NORTH);
+
+        // Tabla
+        String[] cols = {"CÓDIGO WALLET", "RED", "DIRECCIÓN BITCOIN", "ESTADO CIFRADO", "FECHA REGISTRO"};
+        seedTableModel = new DefaultTableModel(cols, 0) {
+            @Override
+            public boolean isCellEditable(int row, int col) {
+                return false;
+            }
+        };
+
+        tblSeeds = new JTable(seedTableModel);
+        tblSeeds.setRowHeight(34);
+        tblSeeds.putClientProperty(FlatClientProperties.STYLE, "showHorizontalLines: true; selectionBackground: #E0E7FF; selectionForeground: #1E1B4B");
+        tblSeeds.getTableHeader().putClientProperty(FlatClientProperties.STYLE, "font: bold 12; background: #F8FAFC");
+        tblSeeds.getColumnModel().getColumn(0).setPreferredWidth(160);
+        tblSeeds.getColumnModel().getColumn(1).setPreferredWidth(90);
+        tblSeeds.getColumnModel().getColumn(2).setPreferredWidth(320);
+        tblSeeds.getColumnModel().getColumn(3).setPreferredWidth(160);
+        tblSeeds.getColumnModel().getColumn(4).setPreferredWidth(140);
+
+        JScrollPane scroll = new JScrollPane(tblSeeds);
+        scroll.setBorder(BorderFactory.createLineBorder(new Color(226, 232, 240)));
+        p.add(scroll, BorderLayout.CENTER);
+
+        // Barra inferior de acciones
+        JPanel bottom = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 0));
+        bottom.setOpaque(false);
+
+        JButton btnVerSemilla = new JButton("👁️ REVELAR SEMILLA (12 PALABRAS)");
+        btnVerSemilla.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #FEF3C7; foreground: #92400E; font: bold 12");
+        btnVerSemilla.addActionListener(e -> revelarSemillaSeleccionada());
+        bottom.add(btnVerSemilla);
+
+        JButton btnRestaurarSeleccion = new JButton("🚀 RESTAURAR COMO ACTIVA");
+        btnRestaurarSeleccion.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #D1FAE5; foreground: #065F46; font: bold 12");
+        btnRestaurarSeleccion.addActionListener(e -> restaurarSemillaSeleccionada());
+        bottom.add(btnRestaurarSeleccion);
+
+        JButton btnBorrarSemilla = new JButton("🗑️ ELIMINAR DE BD");
+        btnBorrarSemilla.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #FEE2E2; foreground: #991B1B; font: bold 12");
+        btnBorrarSemilla.addActionListener(e -> eliminarSemillaSeleccionada());
+        bottom.add(btnBorrarSemilla);
+
+        p.add(bottom, BorderLayout.SOUTH);
+
+        cargarTablaSemillas();
+        return p;
+    }
+
+    private void cargarTablaSemillas() {
+        if (seedTableModel == null) return;
+        seedTableModel.setRowCount(0);
+        currentSeedList = LocalDatabaseService.obtenerSemillasWallet(userEmail);
+        for (BtcSeedEntry se : currentSeedList) {
+            seedTableModel.addRow(new Object[]{
+                se.codigoWallet,
+                se.red,
+                (se.direccion != null && !se.direccion.isEmpty()) ? se.direccion : "(No registrada)",
+                "🔒 AES-256 GCM (BD)",
+                se.getFormattedDate()
+            });
+        }
+    }
+
+    private void guardarSemillaActualEnBdFlujo() {
+        if (currentWallet == null) {
+            ToastNotification.show(this, "No hay una billetera activa actualmente.", ToastNotification.Type.WARNING);
+            return;
+        }
+
+        List<String> palabras = BitcoinWalletService.obtenerPalabras(currentWallet);
+        if (palabras == null || palabras.isEmpty()) {
+            ToastNotification.show(this, "No se pudo extraer la frase semilla mnemónica.", ToastNotification.Type.ERROR);
+            return;
+        }
+
+        String dir = BitcoinWalletService.obtenerDireccion(currentWallet);
+
+        JTextField txtCodigo = new JTextField("WALLET-" + (isTestnet ? "TESTNET" : "MAINNET") + "-01");
+        txtCodigo.putClientProperty(FlatClientProperties.STYLE, "font: 13; background: #F8F9FA");
+        JPasswordField pfPin = new JPasswordField(4);
+
+        Object[] msg = {
+            "Asigne un Código / Nombre para identificar esta billetera en la base de datos:",
+            txtCodigo,
+            "Ingrese su PIN para autorizar y cifrar la semilla en la base de datos:",
+            pfPin
+        };
+
+        int opt = JOptionPane.showConfirmDialog(this, msg, "Guardar Semilla en Base de Datos", JOptionPane.OK_CANCEL_OPTION);
+        if (opt != JOptionPane.OK_OPTION) return;
+
+        String codigo = txtCodigo.getText().trim();
+        if (codigo.isEmpty()) {
+            ToastNotification.show(this, "Debe ingresar un código para la billetera.", ToastNotification.Type.WARNING);
+            return;
+        }
+
+        char[] pin = pfPin.getPassword();
+        char[] pinCheck = Arrays.copyOf(pin, pin.length);
+        if (SecuritySession.hasUserPin() && !SecuritySession.verifyUserPin(pinCheck)) {
+            JOptionPane.showMessageDialog(this, "PIN incorrecto. Operación cancelada.", "Error", JOptionPane.ERROR_MESSAGE);
+            Arrays.fill(pin, '0');
+            return;
+        }
+
+        try {
+            String frase = String.join(" ", palabras);
+            boolean guardado = LocalDatabaseService.guardarSemillaWallet(
+                userEmail, codigo, isTestnet ? "TESTNET" : "MAINNET", dir, frase, pin
+            );
+            if (guardado) {
+                ToastNotification.show(this, "Semilla guardada exitosamente en BD con código: " + codigo.toUpperCase(), ToastNotification.Type.SUCCESS);
+                AuditService.log(userEmail, "BTC_SEED_SAVED_DB", "Semilla de billetera (" + codigo + ") guardada en BD local.");
+                cargarTablaSemillas();
+            } else {
+                ToastNotification.show(this, "No se pudo guardar la semilla en la base de datos.", ToastNotification.Type.ERROR);
+            }
+        } finally {
+            Arrays.fill(pin, '0');
+        }
+    }
+
+    private void guardarSemillaManualEnBdFlujo() {
+        JTextField txtCodigo = new JTextField();
+        txtCodigo.putClientProperty(FlatClientProperties.STYLE, "font: 13; background: #F8F9FA");
+        JComboBox<String> cmbRed = new JComboBox<>(new String[]{"TESTNET", "MAINNET"});
+        JTextField txtPalabras = new JTextField();
+        txtPalabras.putClientProperty(FlatClientProperties.STYLE, "font: 13; background: #F8F9FA");
+        JPasswordField pfPin = new JPasswordField(4);
+
+        Object[] msg = {
+            "Código / Identificador de la Billetera (ej: WALLET-AHORROS):",
+            txtCodigo,
+            "Red de la Billetera:",
+            cmbRed,
+            "12 o 24 Palabras Semilla separadas por espacio:",
+            txtPalabras,
+            "PIN de autorización:",
+            pfPin
+        };
+
+        int opt = JOptionPane.showConfirmDialog(this, msg, "Guardar Semilla Externa en Bóveda", JOptionPane.OK_CANCEL_OPTION);
+        if (opt != JOptionPane.OK_OPTION) return;
+
+        String codigo = txtCodigo.getText().trim();
+        String palabrasRaw = txtPalabras.getText().trim();
+        if (codigo.isEmpty() || palabrasRaw.isEmpty()) {
+            ToastNotification.show(this, "Debe completar todos los campos.", ToastNotification.Type.WARNING);
+            return;
+        }
+
+        List<String> words = Arrays.asList(palabrasRaw.split("\\s+"));
+        if (words.size() != 12 && words.size() != 24) {
+            ToastNotification.show(this, "La frase debe contener exactamente 12 o 24 palabras.", ToastNotification.Type.WARNING);
+            return;
+        }
+
+        char[] pin = pfPin.getPassword();
+        char[] pinCheck = Arrays.copyOf(pin, pin.length);
+        if (SecuritySession.hasUserPin() && !SecuritySession.verifyUserPin(pinCheck)) {
+            JOptionPane.showMessageDialog(this, "PIN incorrecto.", "Error", JOptionPane.ERROR_MESSAGE);
+            Arrays.fill(pin, '0');
+            return;
+        }
+
+        String redSelec = (String) cmbRed.getSelectedItem();
+        boolean isRedTestnet = "TESTNET".equalsIgnoreCase(redSelec);
+        String dir = "";
+        try {
+            Wallet tempWallet = BitcoinWalletService.restaurarBilletera(words, isRedTestnet);
+            dir = BitcoinWalletService.obtenerDireccion(tempWallet);
+        } catch (Exception ignored) {}
+
+        try {
+            boolean guardado = LocalDatabaseService.guardarSemillaWallet(
+                userEmail, codigo, redSelec, dir, palabrasRaw, pin
+            );
+            if (guardado) {
+                ToastNotification.show(this, "Semilla guardada exitosamente en BD con código: " + codigo.toUpperCase(), ToastNotification.Type.SUCCESS);
+                AuditService.log(userEmail, "BTC_SEED_SAVED_DB", "Semilla externa guardada en BD (" + codigo + ")");
+                cargarTablaSemillas();
+            } else {
+                ToastNotification.show(this, "Error al guardar en base de datos.", ToastNotification.Type.ERROR);
+            }
+        } finally {
+            Arrays.fill(pin, '0');
+        }
+    }
+
+    private void revelarSemillaSeleccionada() {
+        if (tblSeeds == null || tblSeeds.getSelectedRow() < 0) {
+            ToastNotification.show(this, "Seleccione una semilla de la tabla primero.", ToastNotification.Type.WARNING);
+            return;
+        }
+        int idx = tblSeeds.getSelectedRow();
+        if (currentSeedList == null || idx >= currentSeedList.size()) return;
+        BtcSeedEntry entry = currentSeedList.get(idx);
+
+        JPasswordField pfPin = new JPasswordField(4);
+        int opc = JOptionPane.showConfirmDialog(this,
+                new Object[]{"Ingrese su PIN para descifrar y revelar la semilla [" + entry.codigoWallet + "]:", pfPin},
+                "Verificación de Seguridad",
+                JOptionPane.OK_CANCEL_OPTION);
+        if (opc != JOptionPane.OK_OPTION) return;
+
+        char[] pin = pfPin.getPassword();
+        char[] pinCheck = Arrays.copyOf(pin, pin.length);
+        if (SecuritySession.hasUserPin() && !SecuritySession.verifyUserPin(pinCheck)) {
+            JOptionPane.showMessageDialog(this, "PIN incorrecto.", "Acceso Denegado", JOptionPane.ERROR_MESSAGE);
+            Arrays.fill(pin, '0');
+            return;
+        }
+
+        try {
+            String frase = LocalDatabaseService.descifrarSemillaWallet(entry, pin);
+            List<String> palabras = Arrays.asList(frase.trim().split("\\s+"));
+            mostrarVentanaPalabrasSemilla(palabras, "SEMILLA DESCIFRADA: " + entry.codigoWallet + " (" + entry.red + ")", null);
+            AuditService.log(userEmail, "BTC_SEED_REVEAL_DB", "Semilla (" + entry.codigoWallet + ") revelada desde BD.");
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Error al descifrar semilla: PIN erróneo o datos corruptos.", "Error", JOptionPane.ERROR_MESSAGE);
+        } finally {
+            Arrays.fill(pin, '0');
+        }
+    }
+
+    private void restaurarSemillaSeleccionada() {
+        if (tblSeeds == null || tblSeeds.getSelectedRow() < 0) {
+            ToastNotification.show(this, "Seleccione una semilla de la tabla primero.", ToastNotification.Type.WARNING);
+            return;
+        }
+        int idx = tblSeeds.getSelectedRow();
+        if (currentSeedList == null || idx >= currentSeedList.size()) return;
+        BtcSeedEntry entry = currentSeedList.get(idx);
+
+        boolean entryIsTestnet = "TESTNET".equalsIgnoreCase(entry.red);
+
+        int conf = JOptionPane.showConfirmDialog(this,
+                "¿Desea restaurar y establecer la billetera [" + entry.codigoWallet + "] (" + entry.red + ") como la billetera activa?\n" +
+                (entryIsTestnet != isTestnet ? "Nota: Se cambiará la vista a la red " + entry.red + ".\n" : ""),
+                "Restaurar Billetera desde Bóveda",
+                JOptionPane.YES_NO_OPTION);
+        if (conf != JOptionPane.YES_OPTION) return;
+
+        JPasswordField pfPin = new JPasswordField(4);
+        int opc = JOptionPane.showConfirmDialog(this,
+                new Object[]{"Ingrese su PIN para autorizar la restauración:", pfPin},
+                "Autorización",
+                JOptionPane.OK_CANCEL_OPTION);
+        if (opc != JOptionPane.OK_OPTION) return;
+
+        char[] pin = pfPin.getPassword();
+        char[] pinCheck = Arrays.copyOf(pin, pin.length);
+        if (SecuritySession.hasUserPin() && !SecuritySession.verifyUserPin(pinCheck)) {
+            JOptionPane.showMessageDialog(this, "PIN incorrecto.", "Acceso Denegado", JOptionPane.ERROR_MESSAGE);
+            Arrays.fill(pin, '0');
+            return;
+        }
+
+        try {
+            String frase = LocalDatabaseService.descifrarSemillaWallet(entry, pin);
+            List<String> palabras = Arrays.asList(frase.trim().split("\\s+"));
+            Wallet restored = BitcoinWalletService.restaurarBilletera(palabras, entryIsTestnet);
+
+            this.isTestnet = entryIsTestnet;
+            if (cbNetworkSelector != null) {
+                cbNetworkSelector.setSelectedIndex(entryIsTestnet ? 0 : 1);
+            }
+            BitcoinWalletService.guardarBilleteraCifrada(restored, userEmail, pin, entryIsTestnet);
+            this.currentWallet = restored;
+            renderizarPantallaDashboard();
+            ToastNotification.show(this, "Billetera [" + entry.codigoWallet + "] restaurada como activa con éxito.", ToastNotification.Type.SUCCESS);
+            AuditService.log(userEmail, "BTC_WALLET_RESTORED_DB", "Billetera restaurada desde semilla en BD (" + entry.codigoWallet + ").");
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Error al restaurar billetera: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        } finally {
+            Arrays.fill(pin, '0');
+        }
+    }
+
+    private void eliminarSemillaSeleccionada() {
+        if (tblSeeds == null || tblSeeds.getSelectedRow() < 0) {
+            ToastNotification.show(this, "Seleccione una semilla de la tabla primero.", ToastNotification.Type.WARNING);
+            return;
+        }
+        int idx = tblSeeds.getSelectedRow();
+        if (currentSeedList == null || idx >= currentSeedList.size()) return;
+        BtcSeedEntry entry = currentSeedList.get(idx);
+
+        int conf = JOptionPane.showConfirmDialog(this,
+                "⚠️ ¿Está seguro de eliminar de la base de datos la semilla [" + entry.codigoWallet + "]?\n" +
+                "Esta acción es permanente.",
+                "Eliminar Semilla de la Bóveda",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE);
+        if (conf != JOptionPane.YES_OPTION) return;
+
+        JPasswordField pfPin = new JPasswordField(4);
+        int opc = JOptionPane.showConfirmDialog(this,
+                new Object[]{"Ingrese su PIN para confirmar el borrado:", pfPin},
+                "Confirmación",
+                JOptionPane.OK_CANCEL_OPTION);
+        if (opc != JOptionPane.OK_OPTION) return;
+
+        char[] pin = pfPin.getPassword();
+        char[] pinCheck = Arrays.copyOf(pin, pin.length);
+        if (SecuritySession.hasUserPin() && !SecuritySession.verifyUserPin(pinCheck)) {
+            JOptionPane.showMessageDialog(this, "PIN incorrecto.", "Acceso Denegado", JOptionPane.ERROR_MESSAGE);
+            Arrays.fill(pin, '0');
+            return;
+        }
+
+        try {
+            boolean ok = LocalDatabaseService.eliminarSemillaWallet(entry.id);
+            if (ok) {
+                ToastNotification.show(this, "Semilla eliminada de la base de datos.", ToastNotification.Type.SUCCESS);
+                AuditService.log(userEmail, "BTC_SEED_DELETED_DB", "Semilla (" + entry.codigoWallet + ") eliminada de BD.");
+                cargarTablaSemillas();
+            } else {
+                ToastNotification.show(this, "No se pudo eliminar la semilla.", ToastNotification.Type.ERROR);
+            }
+        } finally {
+            Arrays.fill(pin, '0');
+        }
+    }
+
+    private void mostrarDialogoBovedaSemillas() {
+        JDialog dlg = new JDialog(SwingUtilities.getWindowAncestor(this), "Bóveda de Semillas Criptográficas (Base de Datos)", JDialog.ModalityType.APPLICATION_MODAL);
+        dlg.setLayout(new BorderLayout());
+        dlg.setSize(880, 520);
+        dlg.setLocationRelativeTo(this);
+        dlg.add(crearPanelBovedaSemillas(), BorderLayout.CENTER);
+        dlg.setVisible(true);
     }
 }

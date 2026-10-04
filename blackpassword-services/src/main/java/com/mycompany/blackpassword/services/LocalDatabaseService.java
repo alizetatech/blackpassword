@@ -205,15 +205,36 @@ public class LocalDatabaseService {
         return b;
     }
 
+    private static synchronized void ensureConnected() {
+        try {
+            if (connection == null || connection.isClosed()) {
+                init();
+            }
+        } catch (Exception e) {
+            System.err.println("[LocalDB] Error verificando conexion: " + e.getMessage());
+        }
+    }
+
     private static void createTables() throws Exception {
         String sqlBoveda = "CREATE TABLE IF NOT EXISTS boveda (" +
                 "id TEXT PRIMARY KEY, " +
                 "u_h TEXT, " +
                 "d_c TEXT, " +
                 "ts INTEGER)";
+
+        String sqlSemillas = "CREATE TABLE IF NOT EXISTS boveda_semillas (" +
+                "id TEXT PRIMARY KEY, " +
+                "u_h TEXT NOT NULL, " +
+                "codigo_wallet TEXT NOT NULL, " +
+                "red TEXT NOT NULL, " +
+                "direccion TEXT, " +
+                "semilla_cifrada TEXT NOT NULL, " +
+                "salt_b64 TEXT NOT NULL, " +
+                "ts INTEGER NOT NULL)";
         
         try (Statement stmt = connection.createStatement()) {
             stmt.execute(sqlBoveda);
+            stmt.execute(sqlSemillas);
         }
     }
 
@@ -340,6 +361,157 @@ public class LocalDatabaseService {
             }
         } catch (Exception e) {
             System.err.println("[LocalDB] Error al limpiar caché: " + e.getMessage());
+        }
+    }
+
+    // --- BÓVEDA DE SEMILLAS DE BILLETERAS BITCOIN ---
+
+    public static class BtcSeedEntry {
+        public final String id;
+        public final String userHash;
+        public final String codigoWallet;
+        public final String red;
+        public final String direccion;
+        public final String semillaCifrada;
+        public final String saltB64;
+        public final long timestamp;
+
+        public BtcSeedEntry(String id, String userHash, String codigoWallet, String red, String direccion, String semillaCifrada, String saltB64, long timestamp) {
+            this.id = id;
+            this.userHash = userHash;
+            this.codigoWallet = codigoWallet;
+            this.red = red;
+            this.direccion = direccion;
+            this.semillaCifrada = semillaCifrada;
+            this.saltB64 = saltB64;
+            this.timestamp = timestamp;
+        }
+
+        public String getFormattedDate() {
+            if (timestamp <= 0) return "--";
+            java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm");
+            return sdf.format(new java.util.Date(timestamp));
+        }
+    }
+
+    public static boolean guardarSemillaWallet(String userEmail, String codigoWallet, String red, String direccion, String fraseSemilla, char[] pin) {
+        if (userEmail == null || codigoWallet == null || fraseSemilla == null || pin == null) {
+            return false;
+        }
+        ensureConnected();
+        try {
+            byte[] salt = new byte[16];
+            new SecureRandom().nextBytes(salt);
+            SecretKeySpec key = RSALogica.derivarLlavePBKDF2(pin, salt, 600000);
+
+            byte[] iv = new byte[GCM_IV_SIZE];
+            new SecureRandom().nextBytes(iv);
+
+            Cipher cipher = Cipher.getInstance(CIPHER_ALGO);
+            cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_SIZE, iv));
+
+            byte[] seedBytes = fraseSemilla.getBytes(StandardCharsets.UTF_8);
+            byte[] enc = cipher.doFinal(seedBytes);
+            java.util.Arrays.fill(seedBytes, (byte) 0);
+
+            ByteBuffer bb = ByteBuffer.allocate(iv.length + enc.length);
+            bb.put(iv);
+            bb.put(enc);
+            byte[] encryptedPayload = bb.array();
+
+            String encB64 = Base64.getEncoder().encodeToString(encryptedPayload);
+            String saltB64 = Base64.getEncoder().encodeToString(salt);
+
+            String userHash = RSALogica.hashConstantToHex(userEmail);
+            String id = "SEED_" + userHash.substring(0, Math.min(8, userHash.length())) + "_" + System.currentTimeMillis();
+
+            String sql = "INSERT OR REPLACE INTO boveda_semillas (id, u_h, codigo_wallet, red, direccion, semilla_cifrada, salt_b64, ts) " +
+                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                pstmt.setString(1, id);
+                pstmt.setString(2, userHash);
+                pstmt.setString(3, codigoWallet.trim().toUpperCase());
+                pstmt.setString(4, red.toUpperCase());
+                pstmt.setString(5, direccion != null ? direccion : "");
+                pstmt.setString(6, encB64);
+                pstmt.setString(7, saltB64);
+                pstmt.setLong(8, System.currentTimeMillis());
+                pstmt.executeUpdate();
+                return true;
+            }
+        } catch (Exception e) {
+            System.err.println("[LocalDB] Error al guardar semilla en boveda: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public static List<BtcSeedEntry> obtenerSemillasWallet(String userEmail) {
+        List<BtcSeedEntry> list = new ArrayList<>();
+        if (userEmail == null || userEmail.isEmpty()) return list;
+        ensureConnected();
+        try {
+            String userHash = RSALogica.hashConstantToHex(userEmail);
+            String sql = "SELECT id, u_h, codigo_wallet, red, direccion, semilla_cifrada, salt_b64, ts FROM boveda_semillas WHERE u_h = ? ORDER BY ts DESC";
+            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                pstmt.setString(1, userHash);
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    while (rs.next()) {
+                        list.add(new BtcSeedEntry(
+                            rs.getString("id"),
+                            rs.getString("u_h"),
+                            rs.getString("codigo_wallet"),
+                            rs.getString("red"),
+                            rs.getString("direccion"),
+                            rs.getString("semilla_cifrada"),
+                            rs.getString("salt_b64"),
+                            rs.getLong("ts")
+                        ));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[LocalDB] Error al obtener semillas: " + e.getMessage());
+        }
+        return list;
+    }
+
+    public static String descifrarSemillaWallet(BtcSeedEntry entry, char[] pin) throws Exception {
+        if (entry == null || pin == null) {
+            throw new IllegalArgumentException("Parametros invalidos para descifrar semilla.");
+        }
+        byte[] salt = Base64.getDecoder().decode(entry.saltB64);
+        SecretKeySpec key = RSALogica.derivarLlavePBKDF2(pin, salt, 600000);
+
+        byte[] rawData = Base64.getDecoder().decode(entry.semillaCifrada);
+        if (rawData.length < GCM_IV_SIZE) {
+            throw new IllegalArgumentException("Datos corruptos de semilla.");
+        }
+
+        byte[] iv = java.util.Arrays.copyOfRange(rawData, 0, GCM_IV_SIZE);
+        byte[] enc = java.util.Arrays.copyOfRange(rawData, GCM_IV_SIZE, rawData.length);
+
+        Cipher cipher = Cipher.getInstance(CIPHER_ALGO);
+        cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_SIZE, iv));
+        byte[] decrypted = cipher.doFinal(enc);
+
+        String frase = new String(decrypted, StandardCharsets.UTF_8);
+        java.util.Arrays.fill(decrypted, (byte) 0);
+        return frase;
+    }
+
+    public static boolean eliminarSemillaWallet(String id) {
+        if (id == null) return false;
+        ensureConnected();
+        try {
+            String sql = "DELETE FROM boveda_semillas WHERE id = ?";
+            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                pstmt.setString(1, id);
+                int affected = pstmt.executeUpdate();
+                return affected > 0;
+            }
+        } catch (Exception e) {
+            System.err.println("[LocalDB] Error al eliminar semilla: " + e.getMessage());
+            return false;
         }
     }
 }
