@@ -24,6 +24,7 @@ import java.util.Base64;
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
+import com.google.cloud.firestore.Firestore;
 
 /**
  * Servicio de Base de Datos Local v10.0 - HSM-BACKED ENCRYPTION.
@@ -431,8 +432,9 @@ public class LocalDatabaseService {
             String encB64 = Base64.getEncoder().encodeToString(encryptedPayload);
             String saltB64 = Base64.getEncoder().encodeToString(salt);
 
-            String userHash = RSALogica.hashConstantToHex(userEmail);
-            String id = "SEED_" + userHash.substring(0, Math.min(8, userHash.length())) + "_" + System.currentTimeMillis();
+            String userHash = RSALogica.hashConstantToHex(userEmail.trim().toLowerCase());
+            long now = System.currentTimeMillis();
+            String id = "SEED_" + userHash.substring(0, Math.min(8, userHash.length())) + "_" + now;
 
             String sql = "INSERT OR REPLACE INTO boveda_semillas (id, u_h, codigo_wallet, red, direccion, semilla_cifrada, salt_b64, ts) " +
                          "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
@@ -444,10 +446,34 @@ public class LocalDatabaseService {
                 pstmt.setString(5, direccion != null ? direccion : "");
                 pstmt.setString(6, encB64);
                 pstmt.setString(7, saltB64);
-                pstmt.setLong(8, System.currentTimeMillis());
+                pstmt.setLong(8, now);
                 pstmt.executeUpdate();
-                return true;
             }
+
+            // Sincronizar en Firebase Firestore (Nube de la aplicación)
+            try {
+                Firestore db = FirebaseService.getFirestore();
+                if (db != null) {
+                    String colUsuarios = RSALogica.hashConstantToHex("usuarios");
+                    String colSemillas = RSALogica.hashConstantToHex("semillas_btc");
+                    Map<String, Object> cloudData = new HashMap<>();
+                    cloudData.put("id", id);
+                    cloudData.put("codigo_wallet", codigoWallet.trim().toUpperCase());
+                    cloudData.put("red", red.toUpperCase());
+                    cloudData.put("direccion", direccion != null ? direccion : "");
+                    cloudData.put("semilla_cifrada", encB64);
+                    cloudData.put("salt_b64", saltB64);
+                    cloudData.put("ts", now);
+                    cloudData.put("fecha_registro", com.google.cloud.Timestamp.now());
+
+                    db.collection(colUsuarios + "/" + userHash + "/" + colSemillas).document(id).set(cloudData);
+                    System.out.println("[LocalDB->Firestore] Semilla sincronizada en Firebase Firestore: " + codigoWallet);
+                }
+            } catch (Throwable t) {
+                System.err.println("[LocalDB->Firestore] Nota: Firebase offline o no conectado, semilla persistida localmente: " + t.getMessage());
+            }
+
+            return true;
         } catch (Exception e) {
             System.err.println("[LocalDB] Error al guardar semilla en boveda: " + e.getMessage());
             return false;
@@ -458,8 +484,49 @@ public class LocalDatabaseService {
         List<BtcSeedEntry> list = new ArrayList<>();
         if (userEmail == null || userEmail.isEmpty()) return list;
         ensureConnected();
+        String userHash = RSALogica.hashConstantToHex(userEmail.trim().toLowerCase());
+
+        // 1. Sincronizar desde Firebase Cloud Firestore si está disponible
         try {
-            String userHash = RSALogica.hashConstantToHex(userEmail);
+            Firestore db = FirebaseService.getFirestore();
+            if (db != null) {
+                String colUsuarios = RSALogica.hashConstantToHex("usuarios");
+                String colSemillas = RSALogica.hashConstantToHex("semillas_btc");
+                var querySnapshot = db.collection(colUsuarios + "/" + userHash + "/" + colSemillas).get().get();
+                if (querySnapshot != null && !querySnapshot.isEmpty()) {
+                    for (var doc : querySnapshot.getDocuments()) {
+                        String docId = doc.getString("id");
+                        if (docId == null) docId = doc.getId();
+                        String cod = doc.getString("codigo_wallet");
+                        String r = doc.getString("red");
+                        String dir = doc.getString("direccion");
+                        String semEnc = doc.getString("semilla_cifrada");
+                        String saltB = doc.getString("salt_b64");
+                        Long ts = doc.getLong("ts");
+                        if (ts == null) ts = System.currentTimeMillis();
+
+                        String sqlSync = "INSERT OR REPLACE INTO boveda_semillas (id, u_h, codigo_wallet, red, direccion, semilla_cifrada, salt_b64, ts) " +
+                                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+                        try (PreparedStatement pstmt = connection.prepareStatement(sqlSync)) {
+                            pstmt.setString(1, docId);
+                            pstmt.setString(2, userHash);
+                            pstmt.setString(3, cod != null ? cod : "");
+                            pstmt.setString(4, r != null ? r : "TESTNET");
+                            pstmt.setString(5, dir != null ? dir : "");
+                            pstmt.setString(6, semEnc != null ? semEnc : "");
+                            pstmt.setString(7, saltB != null ? saltB : "");
+                            pstmt.setLong(8, ts);
+                            pstmt.executeUpdate();
+                        }
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            System.err.println("[LocalDB->Firestore] Firebase no disponible para semillas, usando datos locales: " + t.getMessage());
+        }
+
+        // 2. Consultar registros consolidados de la BD local
+        try {
             String sql = "SELECT id, u_h, codigo_wallet, red, direccion, semilla_cifrada, salt_b64, ts FROM boveda_semillas WHERE u_h = ? ORDER BY ts DESC";
             try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
                 pstmt.setString(1, userHash);
@@ -512,12 +579,39 @@ public class LocalDatabaseService {
         if (id == null) return false;
         ensureConnected();
         try {
+            String uHash = null;
+            String sqlSelect = "SELECT u_h FROM boveda_semillas WHERE id = ?";
+            try (PreparedStatement ps = connection.prepareStatement(sqlSelect)) {
+                ps.setString(1, id);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        uHash = rs.getString("u_h");
+                    }
+                }
+            }
+
             String sql = "DELETE FROM boveda_semillas WHERE id = ?";
+            int affected = 0;
             try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
                 pstmt.setString(1, id);
-                int affected = pstmt.executeUpdate();
-                return affected > 0;
+                affected = pstmt.executeUpdate();
             }
+
+            // Sincronizar eliminación en Firebase Firestore
+            if (uHash != null) {
+                try {
+                    Firestore db = FirebaseService.getFirestore();
+                    if (db != null) {
+                        String colUsuarios = RSALogica.hashConstantToHex("usuarios");
+                        String colSemillas = RSALogica.hashConstantToHex("semillas_btc");
+                        db.collection(colUsuarios + "/" + uHash + "/" + colSemillas).document(id).delete();
+                        System.out.println("[LocalDB->Firestore] Semilla eliminada en Firebase Firestore: " + id);
+                    }
+                } catch (Throwable t) {
+                    System.err.println("[LocalDB->Firestore] Advertencia: No se pudo eliminar semilla de Firebase: " + t.getMessage());
+                }
+            }
+            return affected > 0;
         } catch (Exception e) {
             System.err.println("[LocalDB] Error al eliminar semilla: " + e.getMessage());
             return false;

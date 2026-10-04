@@ -21,6 +21,10 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.cloud.firestore.Firestore;
+import com.google.cloud.firestore.SetOptions;
+import java.util.HashMap;
+import java.util.Map;
 import com.mycompany.blackpassword.crypto.RSALogica;
 import org.bitcoinj.core.Address;
 import org.bitcoinj.core.NetworkParameters;
@@ -151,16 +155,39 @@ public class BitcoinWalletService {
         return addr.toString();
     }
 
+    public static String getBtcFirestorePath(String userEmail) {
+        String colUsuarios = RSALogica.hashConstantToHex("usuarios");
+        String userHash = RSALogica.hashConstantToHex(userEmail.trim().toLowerCase());
+        String colBtcWallet = RSALogica.hashConstantToHex("billetera_btc");
+        return colUsuarios + "/" + userHash + "/" + colBtcWallet;
+    }
+
     /**
-     * Comprueba si el usuario ya tiene una billetera guardada para la red indicada en la Base de Datos Local
+     * Comprueba si el usuario ya tiene una billetera guardada para la red indicada (en Firebase Firestore o BD Local)
      */
     public static boolean existeBilletera(String userEmail, boolean testnet) {
         if (userEmail == null || userEmail.isEmpty()) return false;
+
+        // 1. Comprobar en Firebase Cloud Firestore
+        try {
+            Firestore db = FirebaseService.getFirestore();
+            if (db != null) {
+                String path = getBtcFirestorePath(userEmail);
+                String docId = testnet ? "testnet" : "mainnet";
+                var docSnap = db.collection(path).document(docId).get().get();
+                if (docSnap.exists() && docSnap.contains("payload_cifrado")) {
+                    String p = docSnap.getString("payload_cifrado");
+                    if (p != null && !p.isEmpty()) return true;
+                }
+            }
+        } catch (Throwable ignored) {}
+
+        // 2. Comprobar en BD Local
         if (LocalDatabaseService.existeBtcWalletActiva(userEmail, testnet)) {
             return true;
         }
 
-        // Fallback para migración si existía en preferencias
+        // 3. Fallback para migración si existía en preferencias
         String key = getWalletKey(userEmail, testnet);
         String data = prefs.get(PREF_WALLET_DATA + key, "");
         if (!data.isEmpty()) return true;
@@ -171,7 +198,7 @@ public class BitcoinWalletService {
     }
 
     /**
-     * Guarda la billetera cifrada con AES-256-GCM directamente en la Base de Datos Local SQLite
+     * Guarda la billetera cifrada con AES-256-GCM en Firebase Cloud Firestore y la BD Local SQLite
      */
     public static void guardarBilleteraCifrada(Wallet wallet, String userEmail, char[] pin, boolean testnet) throws Exception {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -184,24 +211,73 @@ public class BitcoinWalletService {
 
         String encoded = java.util.Base64.getEncoder().encodeToString(encryptedPayload);
 
-        // 1. Guardar en Base de Datos Local SQLite protegida
+        // 1. Guardar en Base de Datos Local SQLite como réplica y caché local
         LocalDatabaseService.guardarBtcWalletActiva(userEmail, testnet, encoded);
 
-        // 2. Limpiar permanentemente cualquier clave residual en el Registro del SO
+        // 2. Guardar y sincronizar en Firebase Cloud Firestore (Nube de la aplicación)
+        try {
+            Firestore db = FirebaseService.getFirestore();
+            if (db != null) {
+                String path = getBtcFirestorePath(userEmail);
+                String docId = testnet ? "testnet" : "mainnet";
+                String currentAddressBook = LocalDatabaseService.obtenerBtcAddressBook(userEmail, testnet);
+
+                Map<String, Object> cloudData = new HashMap<>();
+                cloudData.put("payload_cifrado", encoded);
+                cloudData.put("red", testnet ? "TESTNET" : "MAINNET");
+                cloudData.put("fecha_actualizacion", com.google.cloud.Timestamp.now());
+                cloudData.put("address_book_json", currentAddressBook != null ? currentAddressBook : "[]");
+
+                db.collection(path).document(docId).set(cloudData).get();
+                System.out.println("[BitcoinWalletService] Billetera cifrada guardada en Firebase Cloud Firestore (" + (testnet ? "TESTNET" : "MAINNET") + ")");
+            }
+        } catch (Throwable t) {
+            System.err.println("[BitcoinWalletService] Advertencia al sincronizar en Firebase (offline/local): " + t.getMessage());
+        }
+
+        // 3. Limpiar permanentemente cualquier clave residual en el Registro del SO
         limpiarRegistroResidual(userEmail, testnet);
     }
 
     /**
-     * Carga y descifra la billetera del usuario desde la Base de Datos Local SQLite
+     * Carga y descifra la billetera del usuario desde Firebase Cloud Firestore (o réplica local)
      */
     public static Wallet cargarBilleteraCifrada(String userEmail, char[] pin, boolean testnet) throws Exception {
         String key = getWalletKey(userEmail, testnet);
-
-        // 1. Cargar desde la Base de Datos Local SQLite
-        String encoded = LocalDatabaseService.obtenerBtcWalletActiva(userEmail, testnet);
+        String encoded = null;
         boolean migratedFromRegistry = false;
 
-        // 2. Fallback de migración automática si aún residía en el Registro de Windows
+        // 1. Intentar cargar prioritariamente desde Firebase Cloud Firestore
+        try {
+            Firestore db = FirebaseService.getFirestore();
+            if (db != null) {
+                String path = getBtcFirestorePath(userEmail);
+                String docId = testnet ? "testnet" : "mainnet";
+                var docSnap = db.collection(path).document(docId).get().get();
+                if (docSnap.exists()) {
+                    String cloudPayload = docSnap.getString("payload_cifrado");
+                    if (cloudPayload != null && !cloudPayload.isEmpty()) {
+                        encoded = cloudPayload;
+                        // Sincronizar en caché local SQLite
+                        LocalDatabaseService.guardarBtcWalletActiva(userEmail, testnet, cloudPayload);
+                        String cloudAddrBook = docSnap.getString("address_book_json");
+                        if (cloudAddrBook != null && !cloudAddrBook.isEmpty()) {
+                            LocalDatabaseService.guardarBtcAddressBook(userEmail, testnet, cloudAddrBook);
+                        }
+                        System.out.println("[BitcoinWalletService] Billetera cargada directamente desde Firebase Cloud Firestore.");
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            System.err.println("[BitcoinWalletService] Firebase no disponible, usando respaldo en base de datos local: " + t.getMessage());
+        }
+
+        // 2. Cargar desde la Base de Datos Local SQLite si no se obtuvo de la nube
+        if (encoded == null || encoded.isEmpty()) {
+            encoded = LocalDatabaseService.obtenerBtcWalletActiva(userEmail, testnet);
+        }
+
+        // 3. Fallback de migración automática si aún residía en el Registro de Windows
         if (encoded == null || encoded.isEmpty()) {
             encoded = prefs.get(PREF_WALLET_DATA + key, "");
             if (encoded.isEmpty()) {
@@ -267,11 +343,11 @@ public class BitcoinWalletService {
         Wallet wallet = Wallet.loadFromFileStream(bais);
         Arrays.fill(decryptedBytes, (byte) 0);
 
-        // Si provino del Registro o fue rescatada, guardar y asegurar inmediatamente en la Base de Datos SQLite
+        // Si provino del Registro o fue rescatada, guardar y asegurar inmediatamente en la Base de Datos SQLite y Firebase
         if (pin != null && pin.length > 0 && (rescued || migratedFromRegistry)) {
             try {
                 guardarBilleteraCifrada(wallet, userEmail, pin, testnet);
-                System.out.println("[BitcoinWalletService] Billetera migrada y asegurada exitosamente en la base de datos local.");
+                System.out.println("[BitcoinWalletService] Billetera reasegurada exitosamente en Firebase y en la base de datos.");
             } catch (Exception reEncEx) {
                 System.err.println("[BitcoinWalletService] Advertencia al migrar billetera a BD: " + reEncEx.getMessage());
             }
@@ -281,13 +357,26 @@ public class BitcoinWalletService {
     }
 
     /**
-     * Elimina de forma segura la billetera de una red específica en la Base de Datos Local
+     * Elimina de forma segura la billetera de una red específica en Firebase Cloud Firestore y la Base de Datos Local
      */
     public static void eliminarBilletera(String userEmail, boolean testnet) {
-        // 1. Eliminar de la base de datos local SQLite
+        // 1. Eliminar de Firebase Cloud Firestore
+        try {
+            Firestore db = FirebaseService.getFirestore();
+            if (db != null) {
+                String path = getBtcFirestorePath(userEmail);
+                String docId = testnet ? "testnet" : "mainnet";
+                db.collection(path).document(docId).delete().get();
+                System.out.println("[BitcoinWalletService] Billetera eliminada de Firebase Cloud Firestore.");
+            }
+        } catch (Throwable t) {
+            System.err.println("[BitcoinWalletService] Advertencia al eliminar en Firebase: " + t.getMessage());
+        }
+
+        // 2. Eliminar de la base de datos local SQLite
         LocalDatabaseService.eliminarBtcWalletActiva(userEmail, testnet);
 
-        // 2. Destrucción segura y limpieza en el registro de Windows
+        // 3. Destrucción segura y limpieza en el registro de Windows
         limpiarRegistroResidual(userEmail, testnet);
     }
 
@@ -331,14 +420,37 @@ public class BitcoinWalletService {
         return userEmail.trim().toLowerCase() + (testnet ? "_testnet" : "_mainnet");
     }
 
-    // --- LIBRETA DE DIRECCIONES CON ETIQUETAS (ALMACENADA EN BASE DE DATOS) ---
+    // --- LIBRETA DE DIRECCIONES CON ETIQUETAS (ALMACENADA EN LA NUBE FIREBASE Y BD) ---
 
     public static List<BtcAddressEntry> cargarDireccionesEtiquetadas(String userEmail, boolean testnet) {
         List<BtcAddressEntry> list = new ArrayList<>();
-        // 1. Cargar desde la base de datos local SQLite
-        String rawJson = LocalDatabaseService.obtenerBtcAddressBook(userEmail, testnet);
+        String rawJson = null;
 
-        // 2. Fallback de migración si existía en preferencias
+        // 1. Intentar cargar desde Firebase Cloud Firestore
+        try {
+            Firestore db = FirebaseService.getFirestore();
+            if (db != null) {
+                String path = getBtcFirestorePath(userEmail);
+                String docId = testnet ? "testnet" : "mainnet";
+                var docSnap = db.collection(path).document(docId).get().get();
+                if (docSnap.exists() && docSnap.contains("address_book_json")) {
+                    String cloudJson = docSnap.getString("address_book_json");
+                    if (cloudJson != null && !cloudJson.isEmpty() && !cloudJson.equals("[]")) {
+                        rawJson = cloudJson;
+                        LocalDatabaseService.guardarBtcAddressBook(userEmail, testnet, cloudJson);
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            System.err.println("[BitcoinWalletService] Firestore no disponible para libreta, usando BD local: " + t.getMessage());
+        }
+
+        // 2. Cargar desde la base de datos local SQLite
+        if (rawJson == null || rawJson.trim().isEmpty() || rawJson.trim().equals("[]")) {
+            rawJson = LocalDatabaseService.obtenerBtcAddressBook(userEmail, testnet);
+        }
+
+        // 3. Fallback de migración si existía en preferencias
         if (rawJson == null || rawJson.trim().equals("[]") || rawJson.trim().isEmpty()) {
             String legacyRaw = prefs.get(PREF_ADDRESS_BOOK + getWalletKey(userEmail, testnet), "");
             if (!legacyRaw.isEmpty()) {
@@ -387,8 +499,26 @@ public class BitcoinWalletService {
             obj.addProperty("date", entry.date);
             arr.add(obj);
         }
-        // Guardar directamente en la Base de Datos SQLite
-        LocalDatabaseService.guardarBtcAddressBook(userEmail, testnet, arr.toString());
+        String json = arr.toString();
+
+        // 1. Guardar en Base de Datos Local SQLite
+        LocalDatabaseService.guardarBtcAddressBook(userEmail, testnet, json);
+
+        // 2. Sincronizar en Firebase Cloud Firestore
+        try {
+            Firestore db = FirebaseService.getFirestore();
+            if (db != null) {
+                String path = getBtcFirestorePath(userEmail);
+                String docId = testnet ? "testnet" : "mainnet";
+                Map<String, Object> updateMap = new HashMap<>();
+                updateMap.put("address_book_json", json);
+                updateMap.put("fecha_actualizacion", com.google.cloud.Timestamp.now());
+                db.collection(path).document(docId).set(updateMap, SetOptions.merge());
+            }
+        } catch (Throwable t) {
+            System.err.println("[BitcoinWalletService] Advertencia al sincronizar libreta en Firebase: " + t.getMessage());
+        }
+
         // Limpiar registro si existía
         prefs.remove(PREF_ADDRESS_BOOK + getWalletKey(userEmail, testnet));
     }
@@ -404,7 +534,24 @@ public class BitcoinWalletService {
             obj.addProperty("date", entry.date);
             arr.add(obj);
         }
-        LocalDatabaseService.guardarBtcAddressBook(userEmail, testnet, arr.toString());
+        String json = arr.toString();
+
+        // 1. Actualizar en Base de Datos Local SQLite
+        LocalDatabaseService.guardarBtcAddressBook(userEmail, testnet, json);
+
+        // 2. Sincronizar en Firebase Cloud Firestore
+        try {
+            Firestore db = FirebaseService.getFirestore();
+            if (db != null) {
+                String path = getBtcFirestorePath(userEmail);
+                String docId = testnet ? "testnet" : "mainnet";
+                Map<String, Object> updateMap = new HashMap<>();
+                updateMap.put("address_book_json", json);
+                updateMap.put("fecha_actualizacion", com.google.cloud.Timestamp.now());
+                db.collection(path).document(docId).set(updateMap, SetOptions.merge());
+            }
+        } catch (Throwable ignored) {}
+
         prefs.remove(PREF_ADDRESS_BOOK + getWalletKey(userEmail, testnet));
     }
 

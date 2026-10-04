@@ -230,7 +230,7 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
         btnRestaurar.addActionListener(e -> restaurarBilleteraFlujo());
         btnGroup.add(btnRestaurar);
 
-        JButton btnBoveda = new JButton("🔐 BÓVEDA DE SEMILLAS (BD)");
+        JButton btnBoveda = new JButton("🔐 BÓVEDA DE SEMILLAS (NUBE)");
         btnBoveda.setPreferredSize(new Dimension(240, 46));
         btnBoveda.putClientProperty(FlatClientProperties.STYLE, "arc: 14; background: #6B21A8; foreground: #FFFFFF; font: bold 13");
         btnBoveda.addActionListener(e -> mostrarDialogoBovedaSemillas());
@@ -253,7 +253,7 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
         tabbedPane.addTab("📊 RESUMEN & BALANCE", crearPanelResumen());
         tabbedPane.addTab("🏷️ DIRECCIONES & ETIQUETAS", crearPanelDirecciones());
         tabbedPane.addTab("📜 HISTORIAL DE TRANSACCIONES", crearPanelTransacciones());
-        tabbedPane.addTab("🔐 BÓVEDA DE SEMILLAS (BD)", crearPanelBovedaSemillas());
+        tabbedPane.addTab("🔐 BÓVEDA DE SEMILLAS (NUBE)", crearPanelBovedaSemillas());
         tabbedPane.addTab("⚙️ SEGURIDAD", crearPanelSeguridad());
 
         contentContainer.add(tabbedPane, BorderLayout.CENTER);
@@ -979,9 +979,9 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
 
         JPanel info = new JPanel(new GridLayout(2, 1, 0, 4));
         info.setOpaque(false);
-        JLabel title = new JLabel("BÓVEDA DE SEMILLAS CRIPTOGRÁFICAS (BASE DE DATOS LOCAL)");
+        JLabel title = new JLabel("BÓVEDA DE SEMILLAS CRIPTOGRÁFICAS (NUBE FIREBASE & BD LOCAL)");
         title.putClientProperty(FlatClientProperties.STYLE, "font: bold 15; foreground: #1E293B");
-        JLabel desc = new JLabel("Frases semilla respaldadas en la tabla SQLite cifrada con AES-256 GCM. Identifique cada billetera con un código único.");
+        JLabel desc = new JLabel("Frases semilla sincronizadas en la Nube Firebase y respaldadas con cifrado AES-256 GCM.");
         desc.putClientProperty(FlatClientProperties.STYLE, "font: 12; foreground: #64748B");
         info.add(title);
         info.add(desc);
@@ -990,7 +990,7 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
         JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         tools.setOpaque(false);
 
-        JButton btnGuardarActual = new JButton("💾 GUARDAR ACTUAL EN BD");
+        JButton btnGuardarActual = new JButton("💾 GUARDAR EN LA NUBE");
         btnGuardarActual.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #4F46E5; foreground: #FFFFFF; font: bold 12");
         btnGuardarActual.addActionListener(e -> guardarSemillaActualEnBdFlujo());
         tools.add(btnGuardarActual);
@@ -1045,7 +1045,7 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
         btnRestaurarSeleccion.addActionListener(e -> restaurarSemillaSeleccionada());
         bottom.add(btnRestaurarSeleccion);
 
-        JButton btnBorrarSemilla = new JButton("🗑️ ELIMINAR DE BD");
+        JButton btnBorrarSemilla = new JButton("🗑️ ELIMINAR DE LA NUBE");
         btnBorrarSemilla.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #FEE2E2; foreground: #991B1B; font: bold 12");
         btnBorrarSemilla.addActionListener(e -> eliminarSemillaSeleccionada());
         bottom.add(btnBorrarSemilla);
@@ -1065,7 +1065,7 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
                 se.codigoWallet,
                 se.red,
                 (se.direccion != null && !se.direccion.isEmpty()) ? se.direccion : "(No registrada)",
-                "🔒 AES-256 GCM (BD)",
+                "🔒 AES-256 GCM (Nube Firebase)",
                 se.getFormattedDate()
             });
         }
@@ -1090,13 +1090,13 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
         JPasswordField pfPin = new JPasswordField(4);
 
         Object[] msg = {
-            "Asigne un Código / Nombre para identificar esta billetera en la base de datos:",
+            "Asigne un Código / Nombre para identificar esta billetera en la nube (Firebase):",
             txtCodigo,
-            "Ingrese su PIN para autorizar y cifrar la semilla en la base de datos:",
+            "Ingrese su PIN para autorizar y cifrar la semilla en Firebase Firestore:",
             pfPin
         };
 
-        int opt = JOptionPane.showConfirmDialog(this, msg, "Guardar Semilla en Base de Datos", JOptionPane.OK_CANCEL_OPTION);
+        int opt = JOptionPane.showConfirmDialog(this, msg, "Guardar Semilla en la Nube (Firebase)", JOptionPane.OK_CANCEL_OPTION);
         if (opt != JOptionPane.OK_OPTION) return;
 
         String codigo = txtCodigo.getText().trim();
@@ -1119,11 +1119,11 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
                 userEmail, codigo, isTestnet ? "TESTNET" : "MAINNET", dir, frase, pin
             );
             if (guardado) {
-                ToastNotification.show(this, "Semilla guardada exitosamente en BD con código: " + codigo.toUpperCase(), ToastNotification.Type.SUCCESS);
-                AuditService.log(userEmail, "BTC_SEED_SAVED_DB", "Semilla de billetera (" + codigo + ") guardada en BD local.");
+                ToastNotification.show(this, "Semilla guardada y sincronizada en Firebase con código: " + codigo.toUpperCase(), ToastNotification.Type.SUCCESS);
+                AuditService.log(userEmail, "BTC_SEED_SAVED_CLOUD", "Semilla de billetera (" + codigo + ") guardada en Firebase Cloud.");
                 cargarTablaSemillas();
             } else {
-                ToastNotification.show(this, "No se pudo guardar la semilla en la base de datos.", ToastNotification.Type.ERROR);
+                ToastNotification.show(this, "No se pudo guardar la semilla en la nube.", ToastNotification.Type.ERROR);
             }
         } finally {
             Arrays.fill(pin, '0');
@@ -1149,7 +1149,7 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
             pfPin
         };
 
-        int opt = JOptionPane.showConfirmDialog(this, msg, "Guardar Semilla Externa en Bóveda", JOptionPane.OK_CANCEL_OPTION);
+        int opt = JOptionPane.showConfirmDialog(this, msg, "Guardar Semilla Externa en Firebase Cloud", JOptionPane.OK_CANCEL_OPTION);
         if (opt != JOptionPane.OK_OPTION) return;
 
         String codigo = txtCodigo.getText().trim();
@@ -1186,11 +1186,11 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
                 userEmail, codigo, redSelec, dir, palabrasRaw, pin
             );
             if (guardado) {
-                ToastNotification.show(this, "Semilla guardada exitosamente en BD con código: " + codigo.toUpperCase(), ToastNotification.Type.SUCCESS);
-                AuditService.log(userEmail, "BTC_SEED_SAVED_DB", "Semilla externa guardada en BD (" + codigo + ")");
+                ToastNotification.show(this, "Semilla guardada y sincronizada en Firebase con código: " + codigo.toUpperCase(), ToastNotification.Type.SUCCESS);
+                AuditService.log(userEmail, "BTC_SEED_SAVED_CLOUD", "Semilla externa guardada en Firebase (" + codigo + ")");
                 cargarTablaSemillas();
             } else {
-                ToastNotification.show(this, "Error al guardar en base de datos.", ToastNotification.Type.ERROR);
+                ToastNotification.show(this, "Error al guardar en Firebase / Base de datos.", ToastNotification.Type.ERROR);
             }
         } finally {
             Arrays.fill(pin, '0');
@@ -1297,9 +1297,9 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
         BtcSeedEntry entry = currentSeedList.get(idx);
 
         int conf = JOptionPane.showConfirmDialog(this,
-                "⚠️ ¿Está seguro de eliminar de la base de datos la semilla [" + entry.codigoWallet + "]?\n" +
-                "Esta acción es permanente.",
-                "Eliminar Semilla de la Bóveda",
+                "⚠️ ¿Está seguro de eliminar de la nube (Firebase) y la base de datos la semilla [" + entry.codigoWallet + "]?\n" +
+                "Esta acción es permanente e irreversible.",
+                "Eliminar Semilla de la Bóveda en la Nube",
                 JOptionPane.YES_NO_OPTION,
                 JOptionPane.WARNING_MESSAGE);
         if (conf != JOptionPane.YES_OPTION) return;
@@ -1322,8 +1322,8 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
         try {
             boolean ok = LocalDatabaseService.eliminarSemillaWallet(entry.id);
             if (ok) {
-                ToastNotification.show(this, "Semilla eliminada de la base de datos.", ToastNotification.Type.SUCCESS);
-                AuditService.log(userEmail, "BTC_SEED_DELETED_DB", "Semilla (" + entry.codigoWallet + ") eliminada de BD.");
+                ToastNotification.show(this, "Semilla eliminada de la nube y la base de datos.", ToastNotification.Type.SUCCESS);
+                AuditService.log(userEmail, "BTC_SEED_DELETED_CLOUD", "Semilla (" + entry.codigoWallet + ") eliminada de Firebase y BD.");
                 cargarTablaSemillas();
             } else {
                 ToastNotification.show(this, "No se pudo eliminar la semilla.", ToastNotification.Type.ERROR);
@@ -1334,7 +1334,7 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
     }
 
     private void mostrarDialogoBovedaSemillas() {
-        JDialog dlg = new JDialog(SwingUtilities.getWindowAncestor(this), "Bóveda de Semillas Criptográficas (Base de Datos)", JDialog.ModalityType.APPLICATION_MODAL);
+        JDialog dlg = new JDialog(SwingUtilities.getWindowAncestor(this), "Bóveda de Semillas Criptográficas (Nube Firebase & BD)", JDialog.ModalityType.APPLICATION_MODAL);
         dlg.setLayout(new BorderLayout());
         dlg.setSize(880, 520);
         dlg.setLocationRelativeTo(this);
