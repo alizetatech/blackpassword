@@ -63,6 +63,7 @@ public class SecuritySession {
 
     // --- ACCESSORS ---
     public static void setUserPinHash(String pinHash) { userPinHash = pinHash; }
+    public static boolean hasUserPin() { return userPinHash != null && !userPinHash.isEmpty(); }
     public static void setUserSalt(byte[] salt) { userSalt = salt; }
     public static byte[] getUserSalt() { return userSalt; }
     public static void setLocalUidHash(String uidHash) { localUidHash = uidHash; }

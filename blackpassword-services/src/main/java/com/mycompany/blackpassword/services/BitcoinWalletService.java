@@ -189,6 +189,7 @@ public class BitcoinWalletService {
     public static Wallet cargarBilleteraCifrada(String userEmail, char[] pin, boolean testnet) throws Exception {
         String key = getWalletKey(userEmail, testnet);
         String encoded = prefs.get(PREF_WALLET_DATA + key, "");
+        boolean isLegacyKey = false;
         
         // Fallback legacy
         if (encoded.isEmpty()) {
@@ -198,6 +199,7 @@ public class BitcoinWalletService {
             if (!legacyEncoded.isEmpty() && legacyIsTestnet == testnet) {
                 encoded = legacyEncoded;
                 key = legacyKey;
+                isLegacyKey = true;
             }
         }
 
@@ -208,11 +210,64 @@ public class BitcoinWalletService {
         byte[] encryptedPayload = java.util.Base64.getDecoder().decode(encoded);
         byte[] salt = ("BTC_SALT_" + key).getBytes(StandardCharsets.UTF_8);
 
-        byte[] decryptedBytes = descifrarBytes(encryptedPayload, pin, salt);
-        ByteArrayInputStream bais = new ByteArrayInputStream(decryptedBytes);
+        byte[] decryptedBytes = null;
+        boolean rescued = false;
+        try {
+            decryptedBytes = descifrarBytes(encryptedPayload, pin, salt);
+        } catch (Exception primaryEx) {
+            // Intento de auto-rescate si la billetera fue guardada con el PIN limpiado en ceros (\0\0\0\0)
+            int pinLen = (pin != null && pin.length > 0) ? pin.length : 4;
+            char[] zeroPin = new char[pinLen];
+            Arrays.fill(zeroPin, (char) 0);
+            try {
+                decryptedBytes = descifrarBytes(encryptedPayload, zeroPin, salt);
+                rescued = true;
+            } catch (Exception rescueEx1) {
+                // Probar también con sal alternativa (por si key tenía sufijo y sal era legacy)
+                byte[] altSalt = ("BTC_SALT_" + userEmail.trim().toLowerCase()).getBytes(StandardCharsets.UTF_8);
+                try {
+                    decryptedBytes = descifrarBytes(encryptedPayload, zeroPin, altSalt);
+                    rescued = true;
+                } catch (Exception rescueEx2) {
+                    if (pinLen != 4) {
+                        char[] zeroPin4 = new char[]{0, 0, 0, 0};
+                        try {
+                            decryptedBytes = descifrarBytes(encryptedPayload, zeroPin4, salt);
+                            rescued = true;
+                        } catch (Exception rescueEx3) {
+                            try {
+                                decryptedBytes = descifrarBytes(encryptedPayload, zeroPin4, altSalt);
+                                rescued = true;
+                            } catch (Exception rescueEx4) {
+                                throw primaryEx;
+                            }
+                        }
+                    } else {
+                        throw primaryEx;
+                    }
+                }
+            }
+        }
 
+        ByteArrayInputStream bais = new ByteArrayInputStream(decryptedBytes);
         Wallet wallet = Wallet.loadFromFileStream(bais);
         Arrays.fill(decryptedBytes, (byte) 0);
+
+        // Si fue rescatada o estaba en la clave legacy, re-cifrar inmediatamente con el PIN real
+        if (pin != null && pin.length > 0 && (rescued || isLegacyKey)) {
+            try {
+                guardarBilleteraCifrada(wallet, userEmail, pin, testnet);
+                if (isLegacyKey) {
+                    String legacyKey = userEmail.trim().toLowerCase();
+                    prefs.remove(PREF_WALLET_DATA + legacyKey);
+                    prefs.remove(PREF_WALLET_TESTNET + legacyKey);
+                }
+                System.out.println("[BitcoinWalletService] Billetera asegurada/migrada exitosamente con el PIN del usuario.");
+            } catch (Exception reEncEx) {
+                System.err.println("[BitcoinWalletService] Advertencia al re-cifrar billetera rescatada: " + reEncEx.getMessage());
+            }
+        }
+
         return wallet;
     }
 

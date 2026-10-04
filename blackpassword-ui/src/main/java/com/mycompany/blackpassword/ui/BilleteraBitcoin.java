@@ -163,6 +163,14 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
         }
 
         char[] pin = pfPin.getPassword();
+        char[] pinCheck = Arrays.copyOf(pin, pin.length);
+        if (SecuritySession.hasUserPin() && !SecuritySession.verifyUserPin(pinCheck)) {
+            JOptionPane.showMessageDialog(this, "PIN incorrecto.", "Acceso Denegado", JOptionPane.ERROR_MESSAGE);
+            Arrays.fill(pin, '0');
+            renderizarPantallaBienvenida();
+            return;
+        }
+
         try {
             currentWallet = BitcoinWalletService.cargarBilleteraCifrada(userEmail, pin, isTestnet);
             renderizarPantallaDashboard();
@@ -774,7 +782,8 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
         if (opc != JOptionPane.OK_OPTION) return;
 
         char[] pin = pfPin.getPassword();
-        if (!SecuritySession.verifyUserPin(pin)) {
+        char[] pinCheck = Arrays.copyOf(pin, pin.length);
+        if (SecuritySession.hasUserPin() && !SecuritySession.verifyUserPin(pinCheck)) {
             JOptionPane.showMessageDialog(this, "PIN incorrecto. Operación cancelada.", "Error", JOptionPane.ERROR_MESSAGE);
             Arrays.fill(pin, '0');
             return;
