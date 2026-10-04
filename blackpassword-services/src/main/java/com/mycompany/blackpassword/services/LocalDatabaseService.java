@@ -231,10 +231,19 @@ public class LocalDatabaseService {
                 "semilla_cifrada TEXT NOT NULL, " +
                 "salt_b64 TEXT NOT NULL, " +
                 "ts INTEGER NOT NULL)";
+
+        String sqlWallets = "CREATE TABLE IF NOT EXISTS boveda_btc_wallets (" +
+                "id TEXT PRIMARY KEY, " +
+                "u_h TEXT NOT NULL, " +
+                "red TEXT NOT NULL, " +
+                "payload_cifrado TEXT NOT NULL, " +
+                "address_book_json TEXT DEFAULT '[]', " +
+                "ts INTEGER NOT NULL)";
         
         try (Statement stmt = connection.createStatement()) {
             stmt.execute(sqlBoveda);
             stmt.execute(sqlSemillas);
+            stmt.execute(sqlWallets);
         }
     }
 
@@ -512,6 +521,137 @@ public class LocalDatabaseService {
         } catch (Exception e) {
             System.err.println("[LocalDB] Error al eliminar semilla: " + e.getMessage());
             return false;
+        }
+    }
+
+    // --- BÓVEDA DE BILLETERAS BITCOIN ACTIVAS ---
+
+    public static boolean guardarBtcWalletActiva(String userEmail, boolean testnet, String payloadCifradoB64) {
+        if (userEmail == null || payloadCifradoB64 == null) return false;
+        ensureConnected();
+        try {
+            String uHash = RSALogica.hashConstantToHex(userEmail);
+            String red = testnet ? "TESTNET" : "MAINNET";
+            String id = uHash + "_" + red.toLowerCase();
+
+            String sql = "INSERT INTO boveda_btc_wallets (id, u_h, red, payload_cifrado, address_book_json, ts) " +
+                         "VALUES (?, ?, ?, ?, COALESCE((SELECT address_book_json FROM boveda_btc_wallets WHERE id = ?), '[]'), ?) " +
+                         "ON CONFLICT(id) DO UPDATE SET " +
+                         "payload_cifrado = excluded.payload_cifrado, " +
+                         "ts = excluded.ts";
+
+            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                pstmt.setString(1, id);
+                pstmt.setString(2, uHash);
+                pstmt.setString(3, red);
+                pstmt.setString(4, payloadCifradoB64);
+                pstmt.setString(5, id);
+                pstmt.setLong(6, System.currentTimeMillis());
+                pstmt.executeUpdate();
+                return true;
+            }
+        } catch (Exception e) {
+            System.err.println("[LocalDB] Error guardando wallet activa: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public static String obtenerBtcWalletActiva(String userEmail, boolean testnet) {
+        if (userEmail == null || userEmail.isEmpty()) return null;
+        ensureConnected();
+        try {
+            String uHash = RSALogica.hashConstantToHex(userEmail);
+            String red = testnet ? "TESTNET" : "MAINNET";
+            String id = uHash + "_" + red.toLowerCase();
+
+            String sql = "SELECT payload_cifrado FROM boveda_btc_wallets WHERE id = ?";
+            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                pstmt.setString(1, id);
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    if (rs.next()) {
+                        String payload = rs.getString("payload_cifrado");
+                        return (payload != null && !payload.isEmpty()) ? payload : null;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[LocalDB] Error obteniendo wallet activa: " + e.getMessage());
+        }
+        return null;
+    }
+
+    public static boolean existeBtcWalletActiva(String userEmail, boolean testnet) {
+        String payload = obtenerBtcWalletActiva(userEmail, testnet);
+        return payload != null && !payload.isEmpty();
+    }
+
+    public static boolean eliminarBtcWalletActiva(String userEmail, boolean testnet) {
+        if (userEmail == null || userEmail.isEmpty()) return false;
+        ensureConnected();
+        try {
+            String uHash = RSALogica.hashConstantToHex(userEmail);
+            String red = testnet ? "TESTNET" : "MAINNET";
+            String id = uHash + "_" + red.toLowerCase();
+
+            String sql = "DELETE FROM boveda_btc_wallets WHERE id = ?";
+            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                pstmt.setString(1, id);
+                return pstmt.executeUpdate() > 0;
+            }
+        } catch (Exception e) {
+            System.err.println("[LocalDB] Error eliminando wallet activa: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public static String obtenerBtcAddressBook(String userEmail, boolean testnet) {
+        if (userEmail == null || userEmail.isEmpty()) return "[]";
+        ensureConnected();
+        try {
+            String uHash = RSALogica.hashConstantToHex(userEmail);
+            String red = testnet ? "TESTNET" : "MAINNET";
+            String id = uHash + "_" + red.toLowerCase();
+
+            String sql = "SELECT address_book_json FROM boveda_btc_wallets WHERE id = ?";
+            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                pstmt.setString(1, id);
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    if (rs.next()) {
+                        String json = rs.getString("address_book_json");
+                        return (json != null && !json.isEmpty()) ? json : "[]";
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[LocalDB] Error obteniendo libreta de direcciones: " + e.getMessage());
+        }
+        return "[]";
+    }
+
+    public static void guardarBtcAddressBook(String userEmail, boolean testnet, String addressBookJson) {
+        if (userEmail == null || userEmail.isEmpty()) return;
+        ensureConnected();
+        try {
+            String uHash = RSALogica.hashConstantToHex(userEmail);
+            String red = testnet ? "TESTNET" : "MAINNET";
+            String id = uHash + "_" + red.toLowerCase();
+
+            String sql = "INSERT INTO boveda_btc_wallets (id, u_h, red, payload_cifrado, address_book_json, ts) " +
+                         "VALUES (?, ?, ?, '', ?, ?) " +
+                         "ON CONFLICT(id) DO UPDATE SET " +
+                         "address_book_json = excluded.address_book_json, " +
+                         "ts = excluded.ts";
+
+            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                pstmt.setString(1, id);
+                pstmt.setString(2, uHash);
+                pstmt.setString(3, red);
+                pstmt.setString(4, addressBookJson != null ? addressBookJson : "[]");
+                pstmt.setLong(5, System.currentTimeMillis());
+                pstmt.executeUpdate();
+            }
+        } catch (Exception e) {
+            System.err.println("[LocalDB] Error guardando libreta de direcciones: " + e.getMessage());
         }
     }
 }

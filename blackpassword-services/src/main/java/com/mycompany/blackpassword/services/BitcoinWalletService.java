@@ -152,22 +152,26 @@ public class BitcoinWalletService {
     }
 
     /**
-     * Comprueba si el usuario ya tiene una billetera guardada para la red indicada
+     * Comprueba si el usuario ya tiene una billetera guardada para la red indicada en la Base de Datos Local
      */
     public static boolean existeBilletera(String userEmail, boolean testnet) {
         if (userEmail == null || userEmail.isEmpty()) return false;
+        if (LocalDatabaseService.existeBtcWalletActiva(userEmail, testnet)) {
+            return true;
+        }
+
+        // Fallback para migración si existía en preferencias
         String key = getWalletKey(userEmail, testnet);
         String data = prefs.get(PREF_WALLET_DATA + key, "");
         if (!data.isEmpty()) return true;
 
-        // Fallback a clave legacy si coincide la red
         String legacy = prefs.get(PREF_WALLET_DATA + userEmail.trim().toLowerCase(), "");
         boolean legacyIsTestnet = prefs.getBoolean(PREF_WALLET_TESTNET + userEmail.trim().toLowerCase(), true);
         return !legacy.isEmpty() && (legacyIsTestnet == testnet);
     }
 
     /**
-     * Guarda la billetera cifrada con AES-256-GCM derivado del PIN del usuario
+     * Guarda la billetera cifrada con AES-256-GCM directamente en la Base de Datos Local SQLite
      */
     public static void guardarBilleteraCifrada(Wallet wallet, String userEmail, char[] pin, boolean testnet) throws Exception {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -179,32 +183,43 @@ public class BitcoinWalletService {
         byte[] encryptedPayload = cifrarBytes(rawBytes, pin, salt);
 
         String encoded = java.util.Base64.getEncoder().encodeToString(encryptedPayload);
-        prefs.put(PREF_WALLET_DATA + key, encoded);
-        prefs.putBoolean(PREF_WALLET_TESTNET + key, testnet);
+
+        // 1. Guardar en Base de Datos Local SQLite protegida
+        LocalDatabaseService.guardarBtcWalletActiva(userEmail, testnet, encoded);
+
+        // 2. Limpiar permanentemente cualquier clave residual en el Registro del SO
+        limpiarRegistroResidual(userEmail, testnet);
     }
 
     /**
-     * Carga y descifra la billetera del usuario para la red indicada
+     * Carga y descifra la billetera del usuario desde la Base de Datos Local SQLite
      */
     public static Wallet cargarBilleteraCifrada(String userEmail, char[] pin, boolean testnet) throws Exception {
         String key = getWalletKey(userEmail, testnet);
-        String encoded = prefs.get(PREF_WALLET_DATA + key, "");
-        boolean isLegacyKey = false;
-        
-        // Fallback legacy
-        if (encoded.isEmpty()) {
-            String legacyKey = userEmail.trim().toLowerCase();
-            String legacyEncoded = prefs.get(PREF_WALLET_DATA + legacyKey, "");
-            boolean legacyIsTestnet = prefs.getBoolean(PREF_WALLET_TESTNET + legacyKey, true);
-            if (!legacyEncoded.isEmpty() && legacyIsTestnet == testnet) {
-                encoded = legacyEncoded;
-                key = legacyKey;
-                isLegacyKey = true;
+
+        // 1. Cargar desde la Base de Datos Local SQLite
+        String encoded = LocalDatabaseService.obtenerBtcWalletActiva(userEmail, testnet);
+        boolean migratedFromRegistry = false;
+
+        // 2. Fallback de migración automática si aún residía en el Registro de Windows
+        if (encoded == null || encoded.isEmpty()) {
+            encoded = prefs.get(PREF_WALLET_DATA + key, "");
+            if (encoded.isEmpty()) {
+                String legacyKey = userEmail.trim().toLowerCase();
+                String legacyEncoded = prefs.get(PREF_WALLET_DATA + legacyKey, "");
+                boolean legacyIsTestnet = prefs.getBoolean(PREF_WALLET_TESTNET + legacyKey, true);
+                if (!legacyEncoded.isEmpty() && legacyIsTestnet == testnet) {
+                    encoded = legacyEncoded;
+                    key = legacyKey;
+                }
+            }
+            if (encoded != null && !encoded.isEmpty()) {
+                migratedFromRegistry = true;
             }
         }
 
-        if (encoded.isEmpty()) {
-            throw new IllegalStateException("No existe una billetera guardada en esta red para este usuario.");
+        if (encoded == null || encoded.isEmpty()) {
+            throw new IllegalStateException("No existe una billetera guardada en esta red para este usuario en la base de datos.");
         }
 
         byte[] encryptedPayload = java.util.Base64.getDecoder().decode(encoded);
@@ -223,7 +238,6 @@ public class BitcoinWalletService {
                 decryptedBytes = descifrarBytes(encryptedPayload, zeroPin, salt);
                 rescued = true;
             } catch (Exception rescueEx1) {
-                // Probar también con sal alternativa (por si key tenía sufijo y sal era legacy)
                 byte[] altSalt = ("BTC_SALT_" + userEmail.trim().toLowerCase()).getBytes(StandardCharsets.UTF_8);
                 try {
                     decryptedBytes = descifrarBytes(encryptedPayload, zeroPin, altSalt);
@@ -253,18 +267,13 @@ public class BitcoinWalletService {
         Wallet wallet = Wallet.loadFromFileStream(bais);
         Arrays.fill(decryptedBytes, (byte) 0);
 
-        // Si fue rescatada o estaba en la clave legacy, re-cifrar inmediatamente con el PIN real
-        if (pin != null && pin.length > 0 && (rescued || isLegacyKey)) {
+        // Si provino del Registro o fue rescatada, guardar y asegurar inmediatamente en la Base de Datos SQLite
+        if (pin != null && pin.length > 0 && (rescued || migratedFromRegistry)) {
             try {
                 guardarBilleteraCifrada(wallet, userEmail, pin, testnet);
-                if (isLegacyKey) {
-                    String legacyKey = userEmail.trim().toLowerCase();
-                    prefs.remove(PREF_WALLET_DATA + legacyKey);
-                    prefs.remove(PREF_WALLET_TESTNET + legacyKey);
-                }
-                System.out.println("[BitcoinWalletService] Billetera asegurada/migrada exitosamente con el PIN del usuario.");
+                System.out.println("[BitcoinWalletService] Billetera migrada y asegurada exitosamente en la base de datos local.");
             } catch (Exception reEncEx) {
-                System.err.println("[BitcoinWalletService] Advertencia al re-cifrar billetera rescatada: " + reEncEx.getMessage());
+                System.err.println("[BitcoinWalletService] Advertencia al migrar billetera a BD: " + reEncEx.getMessage());
             }
         }
 
@@ -272,43 +281,48 @@ public class BitcoinWalletService {
     }
 
     /**
-     * Elimina de forma segura la billetera de una red específica.
-     * Sobrescribe con ruido criptográfico antes de eliminar para impedir recuperación forense.
+     * Elimina de forma segura la billetera de una red específica en la Base de Datos Local
      */
     public static void eliminarBilletera(String userEmail, boolean testnet) {
-        String key = getWalletKey(userEmail, testnet);
-        String prefData = PREF_WALLET_DATA + key;
-        String prefNet = PREF_WALLET_TESTNET + key;
+        // 1. Eliminar de la base de datos local SQLite
+        LocalDatabaseService.eliminarBtcWalletActiva(userEmail, testnet);
 
-        byte[] junk = new byte[1024];
-        new SecureRandom().nextBytes(junk);
-        prefs.put(prefData, java.util.Base64.getEncoder().encodeToString(junk));
+        // 2. Destrucción segura y limpieza en el registro de Windows
+        limpiarRegistroResidual(userEmail, testnet);
+    }
+
+    private static void limpiarRegistroResidual(String userEmail, boolean testnet) {
         try {
-            prefs.flush();
-        } catch (Exception ignored) {}
+            String key = getWalletKey(userEmail, testnet);
+            String prefData = PREF_WALLET_DATA + key;
+            String prefNet = PREF_WALLET_TESTNET + key;
 
-        prefs.remove(prefData);
-        prefs.remove(prefNet);
+            byte[] junk = new byte[512];
+            new SecureRandom().nextBytes(junk);
+            prefs.put(prefData, java.util.Base64.getEncoder().encodeToString(junk));
+            try { prefs.flush(); } catch (Exception ignored) {}
 
-        // Limpieza de clave legacy si existía
-        String legacyKey = userEmail.trim().toLowerCase();
-        boolean legacyIsTestnet = prefs.getBoolean(PREF_WALLET_TESTNET + legacyKey, true);
-        if (legacyIsTestnet == testnet) {
-            prefs.put(PREF_WALLET_DATA + legacyKey, java.util.Base64.getEncoder().encodeToString(junk));
-            try {
-                prefs.flush();
-            } catch (Exception ignored) {}
-            prefs.remove(PREF_WALLET_DATA + legacyKey);
-            prefs.remove(PREF_WALLET_TESTNET + legacyKey);
-        }
+            prefs.remove(prefData);
+            prefs.remove(prefNet);
+            prefs.remove(PREF_ADDRESS_BOOK + key);
 
-        try {
-            prefs.flush();
+            String legacyKey = userEmail.trim().toLowerCase();
+            boolean legacyIsTestnet = prefs.getBoolean(PREF_WALLET_TESTNET + legacyKey, true);
+            if (legacyIsTestnet == testnet) {
+                prefs.put(PREF_WALLET_DATA + legacyKey, java.util.Base64.getEncoder().encodeToString(junk));
+                try { prefs.flush(); } catch (Exception ignored) {}
+                prefs.remove(PREF_WALLET_DATA + legacyKey);
+                prefs.remove(PREF_WALLET_TESTNET + legacyKey);
+                prefs.remove(PREF_ADDRESS_BOOK + legacyKey);
+            }
+            try { prefs.flush(); } catch (Exception ignored) {}
         } catch (Exception ignored) {}
     }
 
     public static boolean isTestnet(String userEmail) {
         if (userEmail == null || userEmail.isEmpty()) return true;
+        if (LocalDatabaseService.existeBtcWalletActiva(userEmail, true)) return true;
+        if (LocalDatabaseService.existeBtcWalletActiva(userEmail, false)) return false;
         String key = userEmail.trim().toLowerCase();
         return prefs.getBoolean(PREF_WALLET_TESTNET + key, true);
     }
@@ -317,13 +331,24 @@ public class BitcoinWalletService {
         return userEmail.trim().toLowerCase() + (testnet ? "_testnet" : "_mainnet");
     }
 
-    // --- LIBRETA DE DIRECCIONES CON ETIQUETAS ---
+    // --- LIBRETA DE DIRECCIONES CON ETIQUETAS (ALMACENADA EN BASE DE DATOS) ---
 
     public static List<BtcAddressEntry> cargarDireccionesEtiquetadas(String userEmail, boolean testnet) {
         List<BtcAddressEntry> list = new ArrayList<>();
-        String key = PREF_ADDRESS_BOOK + getWalletKey(userEmail, testnet);
-        String rawJson = prefs.get(key, "");
-        if (!rawJson.isEmpty()) {
+        // 1. Cargar desde la base de datos local SQLite
+        String rawJson = LocalDatabaseService.obtenerBtcAddressBook(userEmail, testnet);
+
+        // 2. Fallback de migración si existía en preferencias
+        if (rawJson == null || rawJson.trim().equals("[]") || rawJson.trim().isEmpty()) {
+            String legacyRaw = prefs.get(PREF_ADDRESS_BOOK + getWalletKey(userEmail, testnet), "");
+            if (!legacyRaw.isEmpty()) {
+                rawJson = legacyRaw;
+                LocalDatabaseService.guardarBtcAddressBook(userEmail, testnet, legacyRaw);
+                prefs.remove(PREF_ADDRESS_BOOK + getWalletKey(userEmail, testnet));
+            }
+        }
+
+        if (rawJson != null && !rawJson.isEmpty() && !rawJson.equals("[]")) {
             try {
                 JsonArray arr = JsonParser.parseString(rawJson).getAsJsonArray();
                 for (JsonElement el : arr) {
@@ -334,7 +359,7 @@ public class BitcoinWalletService {
                     list.add(new BtcAddressEntry(addr, lbl, date));
                 }
             } catch (Exception ex) {
-                System.err.println("[BitcoinWalletService] Error cargando libreta: " + ex.getMessage());
+                System.err.println("[BitcoinWalletService] Error cargando libreta desde BD: " + ex.getMessage());
             }
         }
         return list;
@@ -342,7 +367,6 @@ public class BitcoinWalletService {
 
     public static void guardarDireccionEtiquetada(String userEmail, boolean testnet, String address, String label) {
         List<BtcAddressEntry> list = cargarDireccionesEtiquetadas(userEmail, testnet);
-        // Verificar si ya existe para actualizar label
         boolean found = false;
         for (BtcAddressEntry entry : list) {
             if (entry.address.equalsIgnoreCase(address)) {
@@ -355,7 +379,6 @@ public class BitcoinWalletService {
             list.add(0, new BtcAddressEntry(address, label, null));
         }
 
-        // Serializar a JSON
         JsonArray arr = new JsonArray();
         for (BtcAddressEntry entry : list) {
             JsonObject obj = new JsonObject();
@@ -364,7 +387,10 @@ public class BitcoinWalletService {
             obj.addProperty("date", entry.date);
             arr.add(obj);
         }
-        prefs.put(PREF_ADDRESS_BOOK + getWalletKey(userEmail, testnet), arr.toString());
+        // Guardar directamente en la Base de Datos SQLite
+        LocalDatabaseService.guardarBtcAddressBook(userEmail, testnet, arr.toString());
+        // Limpiar registro si existía
+        prefs.remove(PREF_ADDRESS_BOOK + getWalletKey(userEmail, testnet));
     }
 
     public static void eliminarDireccionEtiquetada(String userEmail, boolean testnet, String address) {
@@ -378,7 +404,8 @@ public class BitcoinWalletService {
             obj.addProperty("date", entry.date);
             arr.add(obj);
         }
-        prefs.put(PREF_ADDRESS_BOOK + getWalletKey(userEmail, testnet), arr.toString());
+        LocalDatabaseService.guardarBtcAddressBook(userEmail, testnet, arr.toString());
+        prefs.remove(PREF_ADDRESS_BOOK + getWalletKey(userEmail, testnet));
     }
 
     // --- HISTORIAL DE TRANSACCIONES EN TIEMPO REAL ---
