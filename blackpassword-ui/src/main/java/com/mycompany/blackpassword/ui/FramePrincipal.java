@@ -10,8 +10,14 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Image;
 import java.awt.RenderingHints;
+import java.awt.Taskbar;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+import javax.imageio.ImageIO;
 import javax.swing.JInternalFrame;
 import javax.swing.JMenuItem;
 import javax.swing.SwingUtilities;
@@ -26,6 +32,8 @@ public class FramePrincipal extends javax.swing.JFrame {
     
     private Image backgroundImage = null;
     private boolean camouflageActive = false;
+    private static BufferedImage appIconImage = null;
+    private static List<Image> appIconImages = null;
 
     public FramePrincipal() {
         // CAPA DE INYECCIÓN 2: Refuerzo de tema
@@ -33,11 +41,66 @@ public class FramePrincipal extends javax.swing.JFrame {
             FlatLightLaf.setup();
         }
         
+        setupAppIcon();
         cargarImagenFondo();
         initComponents();
         applyPremiumStyle();
         setupApp();
         setupMenuActions();
+    }
+
+    public static List<Image> getAppIconImages() {
+        if (appIconImages == null) {
+            loadAppIcons();
+        }
+        return appIconImages;
+    }
+
+    public static Image getAppIconImage() {
+        if (appIconImage == null) {
+            loadAppIcons();
+        }
+        return appIconImage;
+    }
+
+    private static synchronized void loadAppIcons() {
+        if (appIconImages != null) return;
+        try {
+            java.net.URL iconUrl = FramePrincipal.class.getResource("/img/blackpasswordimg.png");
+            if (iconUrl == null) {
+                File f = new File("blackpasswordimg.png");
+                if (f.exists()) iconUrl = f.toURI().toURL();
+            }
+            if (iconUrl != null) {
+                appIconImage = ImageIO.read(iconUrl);
+                if (appIconImage != null) {
+                    appIconImages = new ArrayList<>();
+                    int[] sizes = {16, 24, 32, 48, 64, 128, 256, 512};
+                    for (int s : sizes) {
+                        appIconImages.add(appIconImage.getScaledInstance(s, s, Image.SCALE_SMOOTH));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[FramePrincipal] Error cargando icono: " + e.getMessage());
+        }
+    }
+
+    public void setupAppIcon() {
+        loadAppIcons();
+        if (appIconImages != null && !appIconImages.isEmpty()) {
+            this.setIconImages(appIconImages);
+        } else if (appIconImage != null) {
+            this.setIconImage(appIconImage);
+        }
+        try {
+            if (Taskbar.isTaskbarSupported() && appIconImage != null) {
+                Taskbar taskbar = Taskbar.getTaskbar();
+                if (taskbar.isSupported(Taskbar.Feature.ICON_IMAGE)) {
+                    taskbar.setIconImage(appIconImage);
+                }
+            }
+        } catch (Throwable ignored) {}
     }
     
     private void cargarImagenFondo() {
@@ -51,6 +114,9 @@ public class FramePrincipal extends javax.swing.JFrame {
         this.camouflageActive = active;
         FlatAnimatedLafChange.showSnapshot();
         this.setTitle(active ? "Calculadora" : "Blackpassword - Suite de Seguridad Premium");
+        if (!active) {
+            setupAppIcon();
+        }
         jDesktopPane1.repaint();
         FlatLaf.updateUI();
         FlatAnimatedLafChange.hideSnapshotWithAnimation();
