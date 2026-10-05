@@ -462,24 +462,73 @@ public class DogecoinWalletService {
     // --- CONSULTA EN VIVO DE BALANCE Y TRANSACCIONES ---
 
     /**
-     * Consulta el balance en Koinus (1 DOGE = 100,000,000 Koinu) desde la API de Blockchair / SoChain.
+     * Consulta el balance en Koinus (1 DOGE = 100,000,000 Koinu) con redundancia multi-proveedor:
+     * 1. BlockCypher API (alta velocidad y precisión directa en Koinus)
+     * 2. Dogechain.info API (explorer histórico oficial)
+     * 3. Blockchair API (fallback con User-Agent estándar)
      */
     public static long consultarBalanceKoinus(String address, boolean testnet) {
         if (address == null || address.isEmpty()) return 0;
         if (testnet) {
-            // Dogecoin Testnet explorer fallback
+            // Dogecoin Testnet explorer fallback (retorna 0 para no romper la UI)
             return 0;
         }
 
+        // 1. Intento con BlockCypher API
         try {
-            // 1. API pública de Blockchair para Dogecoin
+            String endpoint = "https://api.blockcypher.com/v1/doge/main/addrs/" + address + "/balance";
+            URL url = new URL(endpoint);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(6000);
+            conn.setReadTimeout(6000);
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Blackpassword");
+
+            if (conn.getResponseCode() == 200) {
+                try (InputStreamReader reader = new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8)) {
+                    JsonObject root = JsonParser.parseReader(reader).getAsJsonObject();
+                    if (root.has("final_balance")) {
+                        return root.get("final_balance").getAsLong();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[DogecoinWalletService] BlockCypher balance error: " + e.getMessage());
+        }
+
+        // 2. Intento con Dogechain.info API
+        try {
+            String endpoint = "https://dogechain.info/api/v1/address/balance/" + address;
+            URL url = new URL(endpoint);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(6000);
+            conn.setReadTimeout(6000);
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Blackpassword");
+
+            if (conn.getResponseCode() == 200) {
+                try (InputStreamReader reader = new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8)) {
+                    JsonObject root = JsonParser.parseReader(reader).getAsJsonObject();
+                    if (root.has("balance")) {
+                        String balStr = root.get("balance").getAsString();
+                        double doge = Double.parseDouble(balStr);
+                        return Math.round(doge * 100_000_000.0);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[DogecoinWalletService] Dogechain.info balance error: " + e.getMessage());
+        }
+
+        // 3. Fallback con Blockchair
+        try {
             String endpoint = "https://api.blockchair.com/dogecoin/dashboards/address/" + address;
             URL url = new URL(endpoint);
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
-            conn.setConnectTimeout(7000);
-            conn.setReadTimeout(7000);
-            conn.setRequestProperty("User-Agent", "Blackpassword-Dogecoin");
+            conn.setConnectTimeout(6000);
+            conn.setReadTimeout(6000);
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
 
             if (conn.getResponseCode() == 200) {
                 try (InputStreamReader reader = new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8)) {
@@ -493,26 +542,109 @@ public class DogecoinWalletService {
                 }
             }
         } catch (Exception e) {
-            System.err.println("[DogecoinWalletService] Error consultando balance: " + e.getMessage());
+            System.err.println("[DogecoinWalletService] Blockchair balance error: " + e.getMessage());
         }
+
         return -1;
     }
 
     /**
-     * Consulta transacciones recientes de la dirección Dogecoin en tiempo real.
+     * Consulta transacciones recientes de la dirección Dogecoin con redundancia multi-proveedor:
+     * 1. Dogechain.info (estable y con bajo rechazo de cuotas)
+     * 2. BlockCypher (completo con confirmaciones y timestamps)
+     * 3. Blockchair (fallback)
      */
     public static List<DogeTxInfo> consultarTransacciones(String address, boolean testnet) {
         List<DogeTxInfo> list = new ArrayList<>();
         if (address == null || address.isEmpty() || testnet) return list;
 
+        // 1. Intento con Dogechain.info API
+        try {
+            String endpoint = "https://dogechain.info/api/v1/address/transactions/" + address;
+            URL url = new URL(endpoint);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(7000);
+            conn.setReadTimeout(7000);
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Blackpassword");
+
+            if (conn.getResponseCode() == 200) {
+                try (InputStreamReader reader = new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8)) {
+                    JsonObject root = JsonParser.parseReader(reader).getAsJsonObject();
+                    if (root.has("transactions")) {
+                        JsonArray txs = root.getAsJsonArray("transactions");
+                        for (int i = 0; i < txs.size(); i++) {
+                            JsonObject tx = txs.get(i).getAsJsonObject();
+                            String txid = tx.has("hash") ? tx.get("hash").getAsString() : "tx_" + i;
+                            String valStr = tx.has("value") ? tx.get("value").getAsString() : "0";
+                            double dogeAmt = Double.parseDouble(valStr);
+                            long absAmount = Math.round(Math.abs(dogeAmt) * 100_000_000.0);
+                            int blockId = tx.has("block") ? tx.get("block").getAsInt() : 0;
+                            boolean confirmed = blockId > 0;
+                            long time = tx.has("time") ? tx.get("time").getAsLong() : 0;
+                            boolean isIncoming = dogeAmt >= 0;
+
+                            list.add(new DogeTxInfo(txid, isIncoming, absAmount, confirmed, blockId, time));
+                        }
+                        return list;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[DogecoinWalletService] Dogechain tx error: " + e.getMessage());
+        }
+
+        // 2. Intento con BlockCypher API
+        try {
+            String endpoint = "https://api.blockcypher.com/v1/doge/main/addrs/" + address + "?limit=25";
+            URL url = new URL(endpoint);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(7000);
+            conn.setReadTimeout(7000);
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Blackpassword");
+
+            if (conn.getResponseCode() == 200) {
+                try (InputStreamReader reader = new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8)) {
+                    JsonObject root = JsonParser.parseReader(reader).getAsJsonObject();
+                    if (root.has("txrefs")) {
+                        JsonArray txs = root.getAsJsonArray("txrefs");
+                        for (int i = 0; i < txs.size(); i++) {
+                            JsonObject tx = txs.get(i).getAsJsonObject();
+                            String txid = tx.has("tx_hash") ? tx.get("tx_hash").getAsString() : "tx_" + i;
+                            long value = tx.has("value") ? tx.get("value").getAsLong() : 0;
+                            int blockHeight = tx.has("block_height") ? tx.get("block_height").getAsInt() : 0;
+                            int confirms = tx.has("confirmations") ? tx.get("confirmations").getAsInt() : 0;
+                            boolean confirmed = confirms > 0;
+                            boolean isIncoming = tx.has("tx_input_n") && tx.get("tx_input_n").getAsInt() == -1;
+
+                            long time = 0;
+                            if (tx.has("confirmed")) {
+                                try {
+                                    SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss");
+                                    sdf.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+                                    time = sdf.parse(tx.get("confirmed").getAsString()).getTime() / 1000;
+                                } catch (Exception ignored) {}
+                            }
+                            list.add(new DogeTxInfo(txid, isIncoming, value, confirmed, blockHeight, time));
+                        }
+                        return list;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[DogecoinWalletService] BlockCypher tx error: " + e.getMessage());
+        }
+
+        // 3. Fallback con Blockchair API
         try {
             String endpoint = "https://api.blockchair.com/dogecoin/dashboards/address/" + address + "?transaction_details=true";
             URL url = new URL(endpoint);
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
-            conn.setConnectTimeout(8000);
-            conn.setReadTimeout(8000);
-            conn.setRequestProperty("User-Agent", "Blackpassword-Dogecoin");
+            conn.setConnectTimeout(7000);
+            conn.setReadTimeout(7000);
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
 
             if (conn.getResponseCode() == 200) {
                 try (InputStreamReader reader = new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8)) {
@@ -539,8 +671,9 @@ public class DogecoinWalletService {
                 }
             }
         } catch (Exception e) {
-            System.err.println("[DogecoinWalletService] Error consultando transacciones: " + e.getMessage());
+            System.err.println("[DogecoinWalletService] Blockchair tx error: " + e.getMessage());
         }
+
         return list;
     }
 

@@ -1148,13 +1148,18 @@ public class BilleteraDogecoin extends JInternalFrame {
                     long koinus = get();
                     if (koinus >= 0) {
                         lblBalanceDoge.setText(DogecoinWalletService.koinusToDoge(koinus));
-                        lblBalanceKoinus.setText("≈ " + String.format("%,d", koinus) + " Koinus");
+                        lblBalanceKoinus.setText(isTestnet 
+                                ? "≈ 0 Koinus (Red de pruebas Testnet)" 
+                                : "≈ " + String.format("%,d", koinus) + " Koinus");
                     } else {
                         lblBalanceDoge.setText("0.0000 DOGE");
-                        lblBalanceKoinus.setText("Sin conexión de red directa a explorer");
+                        lblBalanceKoinus.setText(isTestnet 
+                                ? "Red Testnet (Modo de desarrollo)" 
+                                : "Sin conexión a explorers Dogecoin");
                     }
                 } catch (Exception ignored) {
                     lblBalanceDoge.setText("0.0000 DOGE");
+                    lblBalanceKoinus.setText("Error al consultar saldo");
                 }
             }
         };
