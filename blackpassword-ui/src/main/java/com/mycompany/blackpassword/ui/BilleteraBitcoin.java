@@ -43,6 +43,13 @@ import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
+import com.mycompany.blackpassword.services.BitcoinWalletService.SendResult;
+import java.awt.Desktop;
+import java.awt.datatransfer.DataFlavor;
+import java.net.URI;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
+import org.bitcoinj.core.Address;
 import org.bitcoinj.wallet.Wallet;
 
 /**
@@ -70,6 +77,20 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
     private JTable txTable;
     private DefaultTableModel addressTableModel;
     private JTable addressTable;
+
+    // Componentes de Envío y Transferencia
+    private JTabbedPane mainTabbedPane;
+    private long currentBalanceSats = 0;
+    private JLabel lblBalanceDispEnviar;
+    private JTextField txtDestinoEnviarBtc;
+    private JTextField txtMontoEnviarBtc;
+    private JComboBox<String> cbFeeBtc;
+    private JLabel lblSatsCalculados;
+    private JLabel lblResumenDestinoBtc;
+    private JLabel lblResumenMontoBtc;
+    private JLabel lblResumenFeeBtc;
+    private JLabel lblResumenTotalBtc;
+    private JButton btnEjecutarEnvioBtc;
 
     public BilleteraBitcoin(String email) {
         super("Billetera Bitcoin Inteligente HD", true, true, true, true);
@@ -247,16 +268,17 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
     private void renderizarPantallaDashboard() {
         contentContainer.removeAll();
 
-        JTabbedPane tabbedPane = new JTabbedPane();
-        tabbedPane.putClientProperty(FlatClientProperties.STYLE, "tabAreaInsets: 10,15,0,15; font: bold 12");
+        mainTabbedPane = new JTabbedPane();
+        mainTabbedPane.putClientProperty(FlatClientProperties.STYLE, "tabAreaInsets: 10,15,0,15; font: bold 12");
 
-        tabbedPane.addTab("📊 RESUMEN & BALANCE", crearPanelResumen());
-        tabbedPane.addTab("🏷️ DIRECCIONES & ETIQUETAS", crearPanelDirecciones());
-        tabbedPane.addTab("📜 HISTORIAL DE TRANSACCIONES", crearPanelTransacciones());
-        tabbedPane.addTab("🔐 BÓVEDA DE SEMILLAS (NUBE)", crearPanelBovedaSemillas());
-        tabbedPane.addTab("⚙️ SEGURIDAD", crearPanelSeguridad());
+        mainTabbedPane.addTab("📊 RESUMEN & BALANCE", crearPanelResumen());
+        mainTabbedPane.addTab("📤 ENVIAR BITCOIN", crearPanelEnviar());
+        mainTabbedPane.addTab("🏷️ DIRECCIONES & ETIQUETAS", crearPanelDirecciones());
+        mainTabbedPane.addTab("📜 HISTORIAL DE TRANSACCIONES", crearPanelTransacciones());
+        mainTabbedPane.addTab("🔐 BÓVEDA DE SEMILLAS (NUBE)", crearPanelBovedaSemillas());
+        mainTabbedPane.addTab("⚙️ SEGURIDAD", crearPanelSeguridad());
 
-        contentContainer.add(tabbedPane, BorderLayout.CENTER);
+        contentContainer.add(mainTabbedPane, BorderLayout.CENTER);
         contentContainer.revalidate();
         contentContainer.repaint();
 
@@ -299,6 +321,16 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
 
         JPanel balanceRight = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 15));
         balanceRight.setOpaque(false);
+
+        JButton btnIrEnviar = new JButton("📤 ENVIAR BITCOIN");
+        btnIrEnviar.setPreferredSize(new Dimension(170, 40));
+        btnIrEnviar.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #0078D4; foreground: #FFFFFF; font: bold 12; margin: 8,14,8,14");
+        btnIrEnviar.addActionListener(e -> {
+            if (mainTabbedPane != null) {
+                mainTabbedPane.setSelectedIndex(1);
+            }
+        });
+        balanceRight.add(btnIrEnviar);
 
         btnRefreshAll = new JButton("🔄 ACTUALIZAR");
         btnRefreshAll.setPreferredSize(new Dimension(140, 40));
@@ -363,6 +395,443 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
 
         main.add(addressCard, BorderLayout.CENTER);
         return main;
+    }
+
+    // --- PANEL DE ENVÍO Y TRANSFERENCIA BITCOIN ---
+
+    private JPanel crearPanelEnviar() {
+        JPanel main = new JPanel(new BorderLayout(0, 15));
+        main.setOpaque(false);
+        main.setBorder(BorderFactory.createEmptyBorder(20, 25, 20, 25));
+
+        // Tarjeta Superior: Estado del saldo disponible y dirección origen
+        JPanel originCard = new JPanel(new BorderLayout(15, 8));
+        originCard.setBackground(Color.WHITE);
+        originCard.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(1, 1, 1, 1, new Color(230, 230, 230)),
+                BorderFactory.createEmptyBorder(15, 20, 15, 20)
+        ));
+        originCard.putClientProperty(FlatClientProperties.STYLE, "arc: 14");
+
+        JPanel originLeft = new JPanel(new GridLayout(2, 1, 0, 4));
+        originLeft.setOpaque(false);
+
+        String fromAddr = (currentWallet != null) ? BitcoinWalletService.obtenerDireccion(currentWallet) : "No inicializada";
+        JLabel lblFromTitle = new JLabel("DIRECCIÓN ORIGEN (SU BILLETERA): " + fromAddr);
+        lblFromTitle.putClientProperty(FlatClientProperties.STYLE, "font: bold 11; foreground: #0078D4");
+        originLeft.add(lblFromTitle);
+
+        lblBalanceDispEnviar = new JLabel(String.format("Saldo disponible: %s (%,d Sats)", BitcoinWalletService.satsToBtc(currentBalanceSats), currentBalanceSats));
+        lblBalanceDispEnviar.putClientProperty(FlatClientProperties.STYLE, "font: bold 15; foreground: #222222");
+        originLeft.add(lblBalanceDispEnviar);
+
+        originCard.add(originLeft, BorderLayout.CENTER);
+        main.add(originCard, BorderLayout.NORTH);
+
+        // Formulario Central de Envío
+        JPanel formCard = new JPanel(new GridBagLayout());
+        formCard.setBackground(Color.WHITE);
+        formCard.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(1, 1, 1, 1, new Color(230, 230, 230)),
+                BorderFactory.createEmptyBorder(20, 25, 20, 25)
+        ));
+        formCard.putClientProperty(FlatClientProperties.STYLE, "arc: 16");
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.gridx = 0; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = 1.0;
+        int row = 0;
+
+        // 1. Destinatario
+        JLabel lblDestTitle = new JLabel("DIRECCIÓN BITCOIN DE DESTINO (SegWit bech32 o Legacy):");
+        lblDestTitle.putClientProperty(FlatClientProperties.STYLE, "font: bold 12; foreground: #333333");
+        gbc.insets = new Insets(0, 0, 6, 0); gbc.gridy = row++;
+        formCard.add(lblDestTitle, gbc);
+
+        JPanel destRow = new JPanel(new BorderLayout(8, 0));
+        destRow.setOpaque(false);
+
+        txtDestinoEnviarBtc = new JTextField();
+        txtDestinoEnviarBtc.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT, isTestnet ? "tb1q... o 2... o m/n..." : "bc1q... o 1... o 3...");
+        txtDestinoEnviarBtc.putClientProperty(FlatClientProperties.STYLE, "font: 13; background: #F8F9FA; border: 8,10,8,10");
+        destRow.add(txtDestinoEnviarBtc, BorderLayout.CENTER);
+
+        JPanel destBtns = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        destBtns.setOpaque(false);
+
+        JButton btnPegar = new JButton("📋 PEGAR");
+        btnPegar.putClientProperty(FlatClientProperties.STYLE, "arc: 10; font: bold 11; margin: 6,12,6,12");
+        btnPegar.addActionListener(e -> {
+            try {
+                String clip = (String) Toolkit.getDefaultToolkit().getSystemClipboard().getData(DataFlavor.stringFlavor);
+                if (clip != null && !clip.trim().isEmpty()) {
+                    txtDestinoEnviarBtc.setText(clip.trim());
+                    actualizarResumenEnvioBtc();
+                }
+            } catch (Exception ignored) {}
+        });
+        destBtns.add(btnPegar);
+
+        JButton btnLibreta = new JButton("📖 LIBRETA");
+        btnLibreta.putClientProperty(FlatClientProperties.STYLE, "arc: 10; font: bold 11; background: #F0F4F8; margin: 6,12,6,12");
+        btnLibreta.addActionListener(e -> seleccionarDireccionDeLibretaBtc());
+        destBtns.add(btnLibreta);
+
+        destRow.add(destBtns, BorderLayout.EAST);
+
+        gbc.insets = new Insets(0, 0, 16, 0); gbc.gridy = row++;
+        formCard.add(destRow, gbc);
+
+        // 2. Monto
+        JLabel lblMontoTitle = new JLabel("MONTO A ENVIAR (EN BTC):");
+        lblMontoTitle.putClientProperty(FlatClientProperties.STYLE, "font: bold 12; foreground: #333333");
+        gbc.insets = new Insets(0, 0, 6, 0); gbc.gridy = row++;
+        formCard.add(lblMontoTitle, gbc);
+
+        JPanel montoRow = new JPanel(new BorderLayout(8, 0));
+        montoRow.setOpaque(false);
+
+        txtMontoEnviarBtc = new JTextField("0.00000000");
+        txtMontoEnviarBtc.putClientProperty(FlatClientProperties.STYLE, "font: bold 14; background: #F8F9FA; border: 8,10,8,10");
+        montoRow.add(txtMontoEnviarBtc, BorderLayout.CENTER);
+
+        JButton btnMax = new JButton("⚡ MÁXIMO");
+        btnMax.putClientProperty(FlatClientProperties.STYLE, "arc: 10; font: bold 11; background: #FFF4CE; foreground: #8A6D00; margin: 6,14,6,14");
+        btnMax.addActionListener(e -> calcularMaximoEnvioBtc());
+        montoRow.add(btnMax, BorderLayout.EAST);
+
+        gbc.insets = new Insets(0, 0, 4, 0); gbc.gridy = row++;
+        formCard.add(montoRow, gbc);
+
+        lblSatsCalculados = new JLabel("≈ 0 Satoshis (1 BTC = 100,000,000 Sats)");
+        lblSatsCalculados.putClientProperty(FlatClientProperties.STYLE, "font: 11; foreground: #666666");
+        gbc.insets = new Insets(0, 0, 16, 0); gbc.gridy = row++;
+        formCard.add(lblSatsCalculados, gbc);
+
+        // 3. Comisión de Red (Fee)
+        JLabel lblFeeTitle = new JLabel("COMISIÓN DE RED (MINER FEE):");
+        lblFeeTitle.putClientProperty(FlatClientProperties.STYLE, "font: bold 12; foreground: #333333");
+        gbc.insets = new Insets(0, 0, 6, 0); gbc.gridy = row++;
+        formCard.add(lblFeeTitle, gbc);
+
+        cbFeeBtc = new JComboBox<>(new String[]{
+                "🐢 Económica (~1,000 Sats / aprox. 0.00001000 BTC)",
+                "⚡ Normal / Estándar (~2,500 Sats / aprox. 0.00002500 BTC)",
+                "🚀 Rápida / Prioritaria (~5,000 Sats / aprox. 0.00005000 BTC)"
+        });
+        cbFeeBtc.setSelectedIndex(1);
+        cbFeeBtc.putClientProperty(FlatClientProperties.STYLE, "font: 12; arc: 10");
+        cbFeeBtc.addActionListener(e -> actualizarResumenEnvioBtc());
+        gbc.insets = new Insets(0, 0, 20, 0); gbc.gridy = row++;
+        formCard.add(cbFeeBtc, gbc);
+
+        // 4. Tarjeta Resumen
+        JPanel cardResumen = new JPanel(new GridLayout(4, 1, 0, 5));
+        cardResumen.setBackground(new Color(248, 250, 252));
+        cardResumen.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(226, 232, 240), 1, true),
+                BorderFactory.createEmptyBorder(12, 16, 12, 16)
+        ));
+
+        lblResumenDestinoBtc = new JLabel("Destinatario: (Sin especificar)");
+        lblResumenDestinoBtc.putClientProperty(FlatClientProperties.STYLE, "font: 12; foreground: #475569");
+        cardResumen.add(lblResumenDestinoBtc);
+
+        lblResumenMontoBtc = new JLabel("Monto a enviar: 0.00000000 BTC (0 Sats)");
+        lblResumenMontoBtc.putClientProperty(FlatClientProperties.STYLE, "font: 12; foreground: #475569");
+        cardResumen.add(lblResumenMontoBtc);
+
+        lblResumenFeeBtc = new JLabel("Comisión de red: 2,500 Sats");
+        lblResumenFeeBtc.putClientProperty(FlatClientProperties.STYLE, "font: 12; foreground: #475569");
+        cardResumen.add(lblResumenFeeBtc);
+
+        lblResumenTotalBtc = new JLabel("Total a debitar: 0.00002500 BTC (2,500 Sats)");
+        lblResumenTotalBtc.putClientProperty(FlatClientProperties.STYLE, "font: bold 12; foreground: #0F172A");
+        cardResumen.add(lblResumenTotalBtc);
+
+        gbc.insets = new Insets(0, 0, 20, 0); gbc.gridy = row++;
+        formCard.add(cardResumen, gbc);
+
+        // 5. Botón de Envío
+        btnEjecutarEnvioBtc = new JButton("🚀 AUTORIZAR Y ENVIAR BITCOIN AHORA");
+        btnEjecutarEnvioBtc.setPreferredSize(new Dimension(300, 48));
+        btnEjecutarEnvioBtc.putClientProperty(FlatClientProperties.STYLE, "arc: 14; background: #0078D4; foreground: #FFFFFF; font: bold 13; margin: 10,20,10,20");
+        btnEjecutarEnvioBtc.addActionListener(e -> ejecutarEnvioBitcoin());
+        gbc.insets = new Insets(0, 0, 0, 0); gbc.gridy = row++;
+        formCard.add(btnEjecutarEnvioBtc, gbc);
+
+        // Document Listener para actualización en tiempo real
+        DocumentListener docL = new DocumentListener() {
+            @Override public void insertUpdate(DocumentEvent e) { actualizarResumenEnvioBtc(); }
+            @Override public void removeUpdate(DocumentEvent e) { actualizarResumenEnvioBtc(); }
+            @Override public void changedUpdate(DocumentEvent e) { actualizarResumenEnvioBtc(); }
+        };
+        txtMontoEnviarBtc.getDocument().addDocumentListener(docL);
+        txtDestinoEnviarBtc.getDocument().addDocumentListener(docL);
+
+        main.add(formCard, BorderLayout.CENTER);
+        return main;
+    }
+
+    private long obtenerFeeSatsSeleccionadoBtc() {
+        if (cbFeeBtc == null) return 2500;
+        switch (cbFeeBtc.getSelectedIndex()) {
+            case 0: return 1000;
+            case 2: return 5000;
+            default: return 2500;
+        }
+    }
+
+    private void calcularMaximoEnvioBtc() {
+        long fee = obtenerFeeSatsSeleccionadoBtc();
+        if (currentBalanceSats <= fee + 546) {
+            ToastNotification.show(this, "Saldo insuficiente para cubrir el monto mínimo y la comisión de red.", ToastNotification.Type.WARNING);
+            return;
+        }
+        long maxSats = currentBalanceSats - fee;
+        double btc = (double) maxSats / 100_000_000.0;
+        txtMontoEnviarBtc.setText(String.format(java.util.Locale.US, "%.8f", btc));
+        actualizarResumenEnvioBtc();
+    }
+
+    private void actualizarResumenEnvioBtc() {
+        if (txtDestinoEnviarBtc == null || txtMontoEnviarBtc == null) return;
+        String dest = txtDestinoEnviarBtc.getText().trim();
+        lblResumenDestinoBtc.setText("Destinatario: " + (dest.isEmpty() ? "(Sin especificar)" : dest));
+
+        long fee = obtenerFeeSatsSeleccionadoBtc();
+        long amountSats = 0;
+        try {
+            double btc = Double.parseDouble(txtMontoEnviarBtc.getText().trim().replace(",", "."));
+            amountSats = Math.max(0, Math.round(btc * 100_000_000.0));
+        } catch (Exception ignored) {}
+
+        lblSatsCalculados.setText(String.format("≈ %,d Satoshis (1 BTC = 100,000,000 Sats)", amountSats));
+        lblResumenMontoBtc.setText(String.format(java.util.Locale.US, "Monto a enviar: %.8f BTC (%,d Sats)", (double) amountSats / 100_000_000.0, amountSats));
+        lblResumenFeeBtc.setText(String.format("Comisión de red: %,d Sats", fee));
+
+        long total = amountSats + fee;
+        lblResumenTotalBtc.setText(String.format(java.util.Locale.US, "Total a debitar: %.8f BTC (%,d Sats)", (double) total / 100_000_000.0, total));
+    }
+
+    private void seleccionarDireccionDeLibretaBtc() {
+        List<BtcAddressEntry> list = BitcoinWalletService.cargarDireccionesEtiquetadas(userEmail, isTestnet);
+        if (list.isEmpty()) {
+            ToastNotification.show(this, "No hay direcciones guardadas en la libreta.", ToastNotification.Type.INFO);
+            return;
+        }
+
+        String[] opciones = new String[list.size()];
+        for (int i = 0; i < list.size(); i++) {
+            BtcAddressEntry e = list.get(i);
+            opciones[i] = (e.label.isEmpty() ? "(Sin título)" : e.label) + " - " + e.address;
+        }
+
+        String sel = (String) JOptionPane.showInputDialog(
+                this,
+                "Seleccione una dirección guardada en su libreta:",
+                "Libreta de Direcciones Bitcoin",
+                JOptionPane.PLAIN_MESSAGE,
+                null,
+                opciones,
+                opciones[0]
+        );
+
+        if (sel != null && !sel.isEmpty()) {
+            for (BtcAddressEntry e : list) {
+                if (sel.contains(e.address)) {
+                    txtDestinoEnviarBtc.setText(e.address);
+                    actualizarResumenEnvioBtc();
+                    break;
+                }
+            }
+        }
+    }
+
+    private void ejecutarEnvioBitcoin() {
+        if (currentWallet == null) {
+            ToastNotification.show(this, "Billetera no inicializada.", ToastNotification.Type.ERROR);
+            return;
+        }
+
+        String toAddr = txtDestinoEnviarBtc.getText().trim();
+        if (toAddr.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Por favor ingrese la dirección Bitcoin de destino.", "Dato Requerido", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        try {
+            Address.fromString(BitcoinWalletService.getNetwork(isTestnet), toAddr);
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this,
+                    "La dirección de destino no es válida para la red " + (isTestnet ? "TESTNET" : "MAINNET") + ":\n" + e.getMessage(),
+                    "Dirección Inválida", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        long amountSats;
+        try {
+            double btc = Double.parseDouble(txtMontoEnviarBtc.getText().trim().replace(",", "."));
+            amountSats = Math.round(btc * 100_000_000.0);
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this, "Por favor ingrese un monto numérico válido en BTC.", "Monto Inválido", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        if (amountSats < 546) {
+            JOptionPane.showMessageDialog(this, "El monto mínimo permitido es de 546 Satoshis (límite de polvo/dust).", "Monto Muy Bajo", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        long feeSats = obtenerFeeSatsSeleccionadoBtc();
+        long totalReq = amountSats + feeSats;
+
+        if (currentBalanceSats < totalReq) {
+            JOptionPane.showMessageDialog(this,
+                    String.format(java.util.Locale.US,
+                            "Saldo insuficiente en la billetera.\n\nSaldo actual: %s (%,d Sats)\nRequerido (monto + comisión): %.8f BTC (%,d Sats)\n\n" +
+                            "Si acaba de recibir fondos, espere a que la transacción obtenga confirmaciones en la blockchain.",
+                            BitcoinWalletService.satsToBtc(currentBalanceSats), currentBalanceSats,
+                            (double) totalReq / 100_000_000.0, totalReq),
+                    "Saldo Insuficiente", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        JPasswordField pfPin = new JPasswordField(4);
+        int opc = JOptionPane.showConfirmDialog(this,
+                new Object[]{
+                        "🔒 AUTORIZACIÓN DE TRANSFERENCIA ZERO-TRUST\n\n" +
+                        "Está a punto de transmitir fondos en " + (isTestnet ? "RED TESTNET" : "RED BITCOIN MAINNET") + ":\n" +
+                        "• Destino: " + toAddr + "\n" +
+                        "• Monto: " + String.format(java.util.Locale.US, "%.8f BTC (%,d Sats)", (double) amountSats / 100_000_000.0, amountSats) + "\n" +
+                        "• Comisión de red: " + feeSats + " Sats\n\n" +
+                        "Ingrese su PIN de seguridad de 4 dígitos para firmar criptográficamente:",
+                        pfPin
+                },
+                "Confirmar Transmisión Bitcoin",
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.WARNING_MESSAGE);
+
+        if (opc != JOptionPane.OK_OPTION) return;
+
+        char[] pin = pfPin.getPassword();
+        char[] pinCheck = Arrays.copyOf(pin, pin.length);
+        if (SecuritySession.hasUserPin() && !SecuritySession.verifyUserPin(pinCheck)) {
+            JOptionPane.showMessageDialog(this, "PIN de autorización incorrecto. Operación abortada.", "Acceso Denegado", JOptionPane.ERROR_MESSAGE);
+            Arrays.fill(pin, '0');
+            return;
+        }
+        Arrays.fill(pin, '0');
+
+        String fromAddr = BitcoinWalletService.obtenerDireccion(currentWallet);
+        btnEjecutarEnvioBtc.setEnabled(false);
+        btnEjecutarEnvioBtc.setText("⏳ Firmando y transmitiendo transacción a la red...");
+
+        SwingWorker<SendResult, Void> worker = new SwingWorker<>() {
+            @Override
+            protected SendResult doInBackground() {
+                return BitcoinWalletService.enviarBitcoin(currentWallet, fromAddr, toAddr, amountSats, feeSats, isTestnet);
+            }
+
+            @Override
+            protected void done() {
+                btnEjecutarEnvioBtc.setEnabled(true);
+                btnEjecutarEnvioBtc.setText("🚀 AUTORIZAR Y ENVIAR BITCOIN AHORA");
+
+                try {
+                    SendResult res = get();
+                    if (res != null && res.success) {
+                        mostrarDialogoExitoBtc(res.txid, toAddr, amountSats, feeSats);
+                        txtDestinoEnviarBtc.setText("");
+                        txtMontoEnviarBtc.setText("0.00000000");
+                        actualizarResumenEnvioBtc();
+                        refrescarDatosEnSegundoPlano();
+                        AuditService.log(userEmail, "BTC_SEND_SUCCESS", "Enviados " + amountSats + " sats a " + toAddr + " (TXID: " + res.txid + ")");
+                    } else {
+                        String errMsg = (res != null && res.errorMessage != null) ? res.errorMessage : "Error desconocido al procesar transacción.";
+                        JOptionPane.showMessageDialog(BilleteraBitcoin.this,
+                                "No se pudo transmitir la transacción:\n\n" + errMsg,
+                                "Error de Transmisión Bitcoin", JOptionPane.ERROR_MESSAGE);
+                        AuditService.log(userEmail, "BTC_SEND_FAILED", "Fallo al enviar a " + toAddr + ": " + errMsg);
+                    }
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(BilleteraBitcoin.this,
+                            "Excepción durante el proceso de envío: " + ex.getMessage(),
+                            "Error de Red", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        };
+        worker.execute();
+    }
+
+    private void mostrarDialogoExitoBtc(String txid, String destino, long sats, long feeSats) {
+        JDialog dlg = new JDialog(SwingUtilities.getWindowAncestor(this), "¡Transacción Bitcoin Transmitida!", JDialog.ModalityType.APPLICATION_MODAL);
+        dlg.setLayout(new BorderLayout());
+        dlg.setSize(520, 380);
+        dlg.setLocationRelativeTo(this);
+
+        JPanel p = new JPanel(new GridBagLayout());
+        p.setBackground(Color.WHITE);
+        p.setBorder(BorderFactory.createEmptyBorder(25, 25, 20, 25));
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.gridx = 0; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = 1.0;
+        int r = 0;
+
+        JLabel lblOk = new JLabel("✅ TRANSMISIÓN EXITOSA A LA RED BITCOIN", SwingConstants.CENTER);
+        lblOk.putClientProperty(FlatClientProperties.STYLE, "font: bold 15; foreground: #107C10");
+        gbc.insets = new Insets(0, 0, 15, 0); gbc.gridy = r++;
+        p.add(lblOk, gbc);
+
+        JLabel lblDet = new JLabel(String.format(java.util.Locale.US,
+                "<html>Se han transmitido <b>%.8f BTC</b> (%,d Sats) hacia:<br/><code>%s</code><br/>Comisión minera incluida: %,d Sats</html>",
+                (double) sats / 100_000_000.0, sats, destino, feeSats));
+        lblDet.putClientProperty(FlatClientProperties.STYLE, "font: 12; foreground: #333333");
+        gbc.insets = new Insets(0, 0, 15, 0); gbc.gridy = r++;
+        p.add(lblDet, gbc);
+
+        JLabel lblTxidTitle = new JLabel("IDENTIFICADOR DE TRANSACCIÓN (TXID):");
+        lblTxidTitle.putClientProperty(FlatClientProperties.STYLE, "font: bold 11; foreground: #0078D4");
+        gbc.insets = new Insets(0, 0, 4, 0); gbc.gridy = r++;
+        p.add(lblTxidTitle, gbc);
+
+        JTextField tfTxid = new JTextField(txid);
+        tfTxid.setEditable(false);
+        tfTxid.putClientProperty(FlatClientProperties.STYLE, "font: bold 12; background: #F8F9FA; border: 6,8,6,8");
+        gbc.insets = new Insets(0, 0, 20, 0); gbc.gridy = r++;
+        p.add(tfTxid, gbc);
+
+        JPanel btnRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 0));
+        btnRow.setOpaque(false);
+
+        JButton btnCopy = new JButton("📋 COPIAR TXID");
+        btnCopy.putClientProperty(FlatClientProperties.STYLE, "arc: 12; font: bold 12; margin: 8,16,8,16");
+        btnCopy.addActionListener(e -> {
+            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(txid), null);
+            ToastNotification.show(dlg, "TXID copiado al portapapeles.", ToastNotification.Type.SUCCESS);
+        });
+        btnRow.add(btnCopy);
+
+        JButton btnExplorer = new JButton("🌐 VER EN EXPLORADOR");
+        btnExplorer.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #0078D4; foreground: #FFFFFF; font: bold 12; margin: 8,16,8,16");
+        btnExplorer.addActionListener(e -> {
+            try {
+                String url = (isTestnet ? "https://mempool.space/testnet/tx/" : "https://mempool.space/tx/") + txid;
+                if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                    Desktop.getDesktop().browse(new URI(url));
+                } else {
+                    ToastNotification.show(dlg, "URL: " + url, ToastNotification.Type.INFO);
+                }
+            } catch (Exception ex) {
+                ToastNotification.show(dlg, "No se pudo abrir el navegador.", ToastNotification.Type.WARNING);
+            }
+        });
+        btnRow.add(btnExplorer);
+
+        gbc.insets = new Insets(0, 0, 0, 0); gbc.gridy = r++;
+        p.add(btnRow, gbc);
+
+        dlg.add(p, BorderLayout.CENTER);
+        dlg.setVisible(true);
     }
 
     // --- PANEL 2: LIBRETA DE DIRECCIONES CON TÍTULOS ---
@@ -731,9 +1200,15 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
             protected void done() {
                 try {
                     long sats = get();
-                    if (sats >= 0 && lblBalanceBtc != null && lblBalanceSats != null) {
-                        lblBalanceBtc.setText(BitcoinWalletService.satsToBtc(sats));
-                        lblBalanceSats.setText(String.format("%,d Satoshis", sats));
+                    if (sats >= 0) {
+                        currentBalanceSats = sats;
+                        if (lblBalanceBtc != null && lblBalanceSats != null) {
+                            lblBalanceBtc.setText(BitcoinWalletService.satsToBtc(sats));
+                            lblBalanceSats.setText(String.format("%,d Satoshis", sats));
+                        }
+                        if (lblBalanceDispEnviar != null) {
+                            lblBalanceDispEnviar.setText(String.format("Saldo disponible: %s (%,d Sats)", BitcoinWalletService.satsToBtc(sats), sats));
+                        }
                     }
                 } catch (Exception ignored) {
                 } finally {

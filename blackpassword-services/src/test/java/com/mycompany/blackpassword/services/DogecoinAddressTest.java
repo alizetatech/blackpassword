@@ -53,4 +53,56 @@ public class DogecoinAddressTest {
         assertTrue(dogeAddr1.toBase58().startsWith("D"));
         assertNotEquals(dogeAddr0.toBase58(), dogeAddr1.toBase58());
     }
+
+    @Test
+    public void testCrearYFirmarTxDoge() throws Exception {
+        ECKey key = new ECKey();
+        LegacyAddress fromAddr = LegacyAddress.fromKey(DogecoinMainNetParams.get(), key);
+        LegacyAddress toAddr = LegacyAddress.fromBase58(DogecoinMainNetParams.get(), "DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L");
+
+        org.bitcoinj.core.Transaction tx = new org.bitcoinj.core.Transaction(DogecoinMainNetParams.get());
+        tx.addOutput(org.bitcoinj.core.Coin.valueOf(100_000_000L), toAddr);
+
+        org.bitcoinj.core.TransactionOutPoint outPoint = new org.bitcoinj.core.TransactionOutPoint(
+                DogecoinMainNetParams.get(), 0, org.bitcoinj.core.Sha256Hash.wrap("484c94145e97c0b2dd96912c1f056c9e05c8d358ab96ea429c51039d75d0d3c4")
+        );
+        org.bitcoinj.script.Script scriptPubKey = org.bitcoinj.script.ScriptBuilder.createOutputScript(fromAddr);
+        tx.addInput(outPoint.getHash(), outPoint.getIndex(), scriptPubKey);
+
+        org.bitcoinj.crypto.TransactionSignature sig = tx.calculateSignature(0, key, scriptPubKey, org.bitcoinj.core.Transaction.SigHash.ALL, false);
+        org.bitcoinj.script.Script inputScript = org.bitcoinj.script.ScriptBuilder.createInputScript(sig, key);
+        tx.getInput(0).setScriptSig(inputScript);
+
+        String hex = org.bouncycastle.util.encoders.Hex.toHexString(tx.bitcoinSerialize());
+        assertNotNull(hex);
+        System.out.println("Dogecoin raw tx hex: " + hex);
+    }
+
+    @Test
+    public void testCrearYFirmarTxBtcSegwit() throws Exception {
+        org.bitcoinj.params.TestNet3Params params = org.bitcoinj.params.TestNet3Params.get();
+        ECKey key = new ECKey();
+        org.bitcoinj.core.SegwitAddress fromAddr = org.bitcoinj.core.SegwitAddress.fromKey(params, key);
+        org.bitcoinj.core.Address toAddr = org.bitcoinj.core.Address.fromString(params, "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx");
+
+        org.bitcoinj.core.Transaction tx = new org.bitcoinj.core.Transaction(params);
+        tx.addOutput(org.bitcoinj.core.Coin.valueOf(50_000L), toAddr);
+
+        org.bitcoinj.core.Sha256Hash prevHash = org.bitcoinj.core.Sha256Hash.wrap("484c94145e97c0b2dd96912c1f056c9e05c8d358ab96ea429c51039d75d0d3c4");
+        tx.addInput(prevHash, 0, new org.bitcoinj.script.Script(new byte[0]));
+
+        org.bitcoinj.script.Script scriptCode = org.bitcoinj.script.ScriptBuilder.createP2PKHOutputScript(key);
+        org.bitcoinj.crypto.TransactionSignature sig = tx.calculateWitnessSignature(
+                0, key, scriptCode, org.bitcoinj.core.Coin.valueOf(100_000L), org.bitcoinj.core.Transaction.SigHash.ALL, false
+        );
+
+        org.bitcoinj.core.TransactionWitness witness = new org.bitcoinj.core.TransactionWitness(2);
+        witness.setPush(0, sig.encodeToBitcoin());
+        witness.setPush(1, key.getPubKey());
+        tx.getInput(0).setWitness(witness);
+
+        String hex = org.bouncycastle.util.encoders.Hex.toHexString(tx.bitcoinSerialize());
+        assertNotNull(hex);
+        System.out.println("Bitcoin SegWit raw tx hex: " + hex);
+    }
 }

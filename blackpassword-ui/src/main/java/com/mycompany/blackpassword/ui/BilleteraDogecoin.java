@@ -19,6 +19,12 @@ import java.awt.datatransfer.StringSelection;
 import java.awt.image.BufferedImage;
 import java.util.Arrays;
 import java.util.List;
+import com.mycompany.blackpassword.services.DogecoinWalletService.SendResult;
+import java.awt.datatransfer.DataFlavor;
+import java.net.URI;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
+import org.bitcoinj.core.LegacyAddress;
 
 /**
  * Módulo de Billetera Dogecoin Inteligente HD (BIP-39 / BIP-44) para Blackpassword.
@@ -49,6 +55,20 @@ public class BilleteraDogecoin extends JInternalFrame {
     private DefaultTableModel seedTableModel;
     private JTable tblSeeds;
     private List<DogeSeedEntry> currentSeedList;
+
+    // Componentes de Envío y Transferencia Dogecoin
+    private JTabbedPane mainTabbedPane;
+    private long currentBalanceKoinus = 0;
+    private JLabel lblBalanceDispEnviar;
+    private JTextField txtDestinoEnviarDoge;
+    private JTextField txtMontoEnviarDoge;
+    private JComboBox<String> cbFeeDoge;
+    private JLabel lblKoinusCalculados;
+    private JLabel lblResumenDestinoDoge;
+    private JLabel lblResumenMontoDoge;
+    private JLabel lblResumenFeeDoge;
+    private JLabel lblResumenTotalDoge;
+    private JButton btnEjecutarEnvioDoge;
 
     public BilleteraDogecoin(String email) {
         super("Billetera Dogecoin Inteligente HD (Ð)", true, true, true, true);
@@ -235,16 +255,17 @@ public class BilleteraDogecoin extends JInternalFrame {
     private void renderizarPantallaDashboard() {
         contentContainer.removeAll();
 
-        JTabbedPane tabbedPane = new JTabbedPane();
-        tabbedPane.putClientProperty(FlatClientProperties.STYLE, "tabAreaInsets: 10,15,0,15; font: bold 12");
+        mainTabbedPane = new JTabbedPane();
+        mainTabbedPane.putClientProperty(FlatClientProperties.STYLE, "tabAreaInsets: 10,15,0,15; font: bold 12");
 
-        tabbedPane.addTab("📊 RESUMEN & BALANCE", crearPanelResumen());
-        tabbedPane.addTab("🏷️ DIRECCIONES & ETIQUETAS", crearPanelDirecciones());
-        tabbedPane.addTab("📜 HISTORIAL DE TRANSACCIONES", crearPanelTransacciones());
-        tabbedPane.addTab("🔐 BÓVEDA DE SEMILLAS (NUBE)", crearPanelBovedaSemillas());
-        tabbedPane.addTab("⚙️ SEGURIDAD", crearPanelSeguridad());
+        mainTabbedPane.addTab("📊 RESUMEN & BALANCE", crearPanelResumen());
+        mainTabbedPane.addTab("📤 ENVIAR DOGECOIN", crearPanelEnviar());
+        mainTabbedPane.addTab("🏷️ DIRECCIONES & ETIQUETAS", crearPanelDirecciones());
+        mainTabbedPane.addTab("📜 HISTORIAL DE TRANSACCIONES", crearPanelTransacciones());
+        mainTabbedPane.addTab("🔐 BÓVEDA DE SEMILLAS (NUBE)", crearPanelBovedaSemillas());
+        mainTabbedPane.addTab("⚙️ SEGURIDAD", crearPanelSeguridad());
 
-        contentContainer.add(tabbedPane, BorderLayout.CENTER);
+        contentContainer.add(mainTabbedPane, BorderLayout.CENTER);
         contentContainer.revalidate();
         contentContainer.repaint();
 
@@ -334,6 +355,15 @@ public class BilleteraDogecoin extends JInternalFrame {
         btnNewAddr.addActionListener(e -> generarNuevaDireccionFlujo());
         btnRow.add(btnNewAddr);
 
+        JButton btnIrEnviar = new JButton("📤 ENVIAR DOGECOIN");
+        btnIrEnviar.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #B45309; foreground: #FFFFFF; font: bold 12; margin: 8,16,8,16");
+        btnIrEnviar.addActionListener(e -> {
+            if (mainTabbedPane != null) {
+                mainTabbedPane.setSelectedIndex(1);
+            }
+        });
+        btnRow.add(btnIrEnviar);
+
         gbcD.gridy = r++; gbcD.insets = new Insets(0, 0, 0, 0);
         details.add(btnRow, gbcD);
 
@@ -341,6 +371,446 @@ public class BilleteraDogecoin extends JInternalFrame {
         main.add(cardAddress, BorderLayout.CENTER);
 
         return main;
+    }
+
+    // --- PANEL DE ENVÍO Y TRANSFERENCIA DOGECOIN ---
+
+    private JPanel crearPanelEnviar() {
+        JPanel main = new JPanel(new BorderLayout(0, 15));
+        main.setOpaque(false);
+        main.setBorder(BorderFactory.createEmptyBorder(20, 25, 20, 25));
+
+        // Tarjeta Superior: Dirección Origen y Saldo
+        JPanel originCard = new JPanel(new BorderLayout(15, 8));
+        originCard.setBackground(new Color(254, 243, 199)); // Doge Gold light
+        originCard.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(245, 158, 11), 1, true),
+                BorderFactory.createEmptyBorder(15, 20, 15, 20)
+        ));
+        originCard.putClientProperty(FlatClientProperties.STYLE, "arc: 14");
+
+        JPanel originLeft = new JPanel(new GridLayout(2, 1, 0, 4));
+        originLeft.setOpaque(false);
+
+        String fromAddr = (currentWallet != null) ? currentWallet.currentAddress : "No inicializada";
+        JLabel lblFromTitle = new JLabel("DIRECCIÓN ORIGEN (SU BILLETERA DOGECOIN): " + fromAddr);
+        lblFromTitle.putClientProperty(FlatClientProperties.STYLE, "font: bold 11; foreground: #92400E");
+        originLeft.add(lblFromTitle);
+
+        lblBalanceDispEnviar = new JLabel(String.format(java.util.Locale.US, "Saldo disponible: %.4f DOGE (%,d Koinus)", (double) currentBalanceKoinus / 100_000_000.0, currentBalanceKoinus));
+        lblBalanceDispEnviar.putClientProperty(FlatClientProperties.STYLE, "font: bold 15; foreground: #78350F");
+        originLeft.add(lblBalanceDispEnviar);
+
+        originCard.add(originLeft, BorderLayout.CENTER);
+        main.add(originCard, BorderLayout.NORTH);
+
+        // Formulario Central de Envío
+        JPanel formCard = new JPanel(new GridBagLayout());
+        formCard.setBackground(Color.WHITE);
+        formCard.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(230, 225, 210), 1, true),
+                BorderFactory.createEmptyBorder(20, 25, 20, 25)
+        ));
+        formCard.putClientProperty(FlatClientProperties.STYLE, "arc: 16");
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.gridx = 0; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = 1.0;
+        int row = 0;
+
+        // 1. Destinatario
+        JLabel lblDestTitle = new JLabel("DIRECCIÓN DOGECOIN DESTINO (P2PKH):");
+        lblDestTitle.putClientProperty(FlatClientProperties.STYLE, "font: bold 12; foreground: #78350F");
+        gbc.insets = new Insets(0, 0, 6, 0); gbc.gridy = row++;
+        formCard.add(lblDestTitle, gbc);
+
+        JPanel destRow = new JPanel(new BorderLayout(8, 0));
+        destRow.setOpaque(false);
+
+        txtDestinoEnviarDoge = new JTextField();
+        txtDestinoEnviarDoge.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT, isTestnet ? "Ingrese dirección Dogecoin Testnet (ej: n... o m...)" : "Ingrese dirección Dogecoin (ej: D...)");
+        txtDestinoEnviarDoge.putClientProperty(FlatClientProperties.STYLE, "font: 13; background: #FFFBEB; border: 8,10,8,10");
+        destRow.add(txtDestinoEnviarDoge, BorderLayout.CENTER);
+
+        JPanel destBtns = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        destBtns.setOpaque(false);
+
+        JButton btnPegar = new JButton("📋 PEGAR");
+        btnPegar.putClientProperty(FlatClientProperties.STYLE, "arc: 10; font: bold 11; margin: 6,12,6,12; background: #FEF3C7; foreground: #92400E");
+        btnPegar.addActionListener(e -> {
+            try {
+                String clip = (String) Toolkit.getDefaultToolkit().getSystemClipboard().getData(DataFlavor.stringFlavor);
+                if (clip != null && !clip.trim().isEmpty()) {
+                    txtDestinoEnviarDoge.setText(clip.trim());
+                    actualizarResumenEnvioDoge();
+                }
+            } catch (Exception ignored) {}
+        });
+        destBtns.add(btnPegar);
+
+        JButton btnLibreta = new JButton("📖 LIBRETA");
+        btnLibreta.putClientProperty(FlatClientProperties.STYLE, "arc: 10; font: bold 11; background: #FEF3C7; foreground: #92400E; margin: 6,12,6,12");
+        btnLibreta.addActionListener(e -> seleccionarDireccionDeLibretaDoge());
+        destBtns.add(btnLibreta);
+
+        destRow.add(destBtns, BorderLayout.EAST);
+
+        gbc.insets = new Insets(0, 0, 16, 0); gbc.gridy = row++;
+        formCard.add(destRow, gbc);
+
+        // 2. Monto
+        JLabel lblMontoTitle = new JLabel("MONTO A ENVIAR (EN DOGE):");
+        lblMontoTitle.putClientProperty(FlatClientProperties.STYLE, "font: bold 12; foreground: #78350F");
+        gbc.insets = new Insets(0, 0, 6, 0); gbc.gridy = row++;
+        formCard.add(lblMontoTitle, gbc);
+
+        JPanel montoRow = new JPanel(new BorderLayout(8, 0));
+        montoRow.setOpaque(false);
+
+        txtMontoEnviarDoge = new JTextField("0.0000");
+        txtMontoEnviarDoge.putClientProperty(FlatClientProperties.STYLE, "font: bold 14; background: #FFFBEB; border: 8,10,8,10");
+        montoRow.add(txtMontoEnviarDoge, BorderLayout.CENTER);
+
+        JButton btnMax = new JButton("⚡ MÁXIMO");
+        btnMax.putClientProperty(FlatClientProperties.STYLE, "arc: 10; font: bold 11; background: #FDE68A; foreground: #78350F; margin: 6,14,6,14");
+        btnMax.addActionListener(e -> calcularMaximoEnvioDoge());
+        montoRow.add(btnMax, BorderLayout.EAST);
+
+        gbc.insets = new Insets(0, 0, 4, 0); gbc.gridy = row++;
+        formCard.add(montoRow, gbc);
+
+        lblKoinusCalculados = new JLabel("≈ 0 Koinus (1 DOGE = 100,000,000 Koinu)");
+        lblKoinusCalculados.putClientProperty(FlatClientProperties.STYLE, "font: 11; foreground: #B45309");
+        gbc.insets = new Insets(0, 0, 16, 0); gbc.gridy = row++;
+        formCard.add(lblKoinusCalculados, gbc);
+
+        // 3. Comisión de Red
+        JLabel lblFeeTitle = new JLabel("COMISIÓN DE RED (NETWORK FEE):");
+        lblFeeTitle.putClientProperty(FlatClientProperties.STYLE, "font: bold 12; foreground: #78350F");
+        gbc.insets = new Insets(0, 0, 6, 0); gbc.gridy = row++;
+        formCard.add(lblFeeTitle, gbc);
+
+        cbFeeDoge = new JComboBox<>(new String[]{
+                "🐢 Económica (0.5 DOGE = 50,000,000 Koinus)",
+                "⚡ Estándar / Recomendada (1.0 DOGE = 100,000,000 Koinus)",
+                "🚀 Rápida / Prioritaria (2.0 DOGE = 200,000,000 Koinus)"
+        });
+        cbFeeDoge.setSelectedIndex(1);
+        cbFeeDoge.putClientProperty(FlatClientProperties.STYLE, "font: 12; arc: 10");
+        cbFeeDoge.addActionListener(e -> actualizarResumenEnvioDoge());
+        gbc.insets = new Insets(0, 0, 20, 0); gbc.gridy = row++;
+        formCard.add(cbFeeDoge, gbc);
+
+        // 4. Tarjeta Resumen
+        JPanel cardResumen = new JPanel(new GridLayout(4, 1, 0, 5));
+        cardResumen.setBackground(new Color(255, 251, 235));
+        cardResumen.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(253, 230, 138), 1, true),
+                BorderFactory.createEmptyBorder(12, 16, 12, 16)
+        ));
+
+        lblResumenDestinoDoge = new JLabel("Destinatario: (Sin especificar)");
+        lblResumenDestinoDoge.putClientProperty(FlatClientProperties.STYLE, "font: 12; foreground: #92400E");
+        cardResumen.add(lblResumenDestinoDoge);
+
+        lblResumenMontoDoge = new JLabel("Monto a enviar: 0.0000 DOGE (0 Koinus)");
+        lblResumenMontoDoge.putClientProperty(FlatClientProperties.STYLE, "font: 12; foreground: #92400E");
+        cardResumen.add(lblResumenMontoDoge);
+
+        lblResumenFeeDoge = new JLabel("Comisión de red: 1.0 DOGE (100,000,000 Koinus)");
+        lblResumenFeeDoge.putClientProperty(FlatClientProperties.STYLE, "font: 12; foreground: #92400E");
+        cardResumen.add(lblResumenFeeDoge);
+
+        lblResumenTotalDoge = new JLabel("Total a debitar: 1.0 DOGE");
+        lblResumenTotalDoge.putClientProperty(FlatClientProperties.STYLE, "font: bold 12; foreground: #78350F");
+        cardResumen.add(lblResumenTotalDoge);
+
+        gbc.insets = new Insets(0, 0, 20, 0); gbc.gridy = row++;
+        formCard.add(cardResumen, gbc);
+
+        // 5. Botón de Envío
+        btnEjecutarEnvioDoge = new JButton("🚀 AUTORIZAR Y TRANSMITIR DOGECOIN AHORA");
+        btnEjecutarEnvioDoge.setPreferredSize(new Dimension(320, 48));
+        btnEjecutarEnvioDoge.putClientProperty(FlatClientProperties.STYLE, "arc: 14; background: #D97706; foreground: #FFFFFF; font: bold 13; margin: 10,20,10,20");
+        btnEjecutarEnvioDoge.addActionListener(e -> ejecutarEnvioDogecoin());
+        gbc.insets = new Insets(0, 0, 0, 0); gbc.gridy = row++;
+        formCard.add(btnEjecutarEnvioDoge, gbc);
+
+        // Document Listener para cálculo en tiempo real
+        DocumentListener docL = new DocumentListener() {
+            @Override public void insertUpdate(DocumentEvent e) { actualizarResumenEnvioDoge(); }
+            @Override public void removeUpdate(DocumentEvent e) { actualizarResumenEnvioDoge(); }
+            @Override public void changedUpdate(DocumentEvent e) { actualizarResumenEnvioDoge(); }
+        };
+        txtMontoEnviarDoge.getDocument().addDocumentListener(docL);
+        txtDestinoEnviarDoge.getDocument().addDocumentListener(docL);
+
+        main.add(formCard, BorderLayout.CENTER);
+        return main;
+    }
+
+    private long obtenerFeeKoinusSeleccionadoDoge() {
+        if (cbFeeDoge == null) return 100_000_000L;
+        switch (cbFeeDoge.getSelectedIndex()) {
+            case 0: return 50_000_000L;  // 0.5 DOGE
+            case 2: return 200_000_000L; // 2.0 DOGE
+            default: return 100_000_000L; // 1.0 DOGE
+        }
+    }
+
+    private void calcularMaximoEnvioDoge() {
+        long fee = obtenerFeeKoinusSeleccionadoDoge();
+        if (currentBalanceKoinus <= fee + 1_000_000L) {
+            ToastNotification.show(this, "Saldo insuficiente para cubrir el monto mínimo (0.01 DOGE) y la comisión.", ToastNotification.Type.WARNING);
+            return;
+        }
+        long maxKoinus = currentBalanceKoinus - fee;
+        double doge = (double) maxKoinus / 100_000_000.0;
+        txtMontoEnviarDoge.setText(String.format(java.util.Locale.US, "%.4f", doge));
+        actualizarResumenEnvioDoge();
+    }
+
+    private void actualizarResumenEnvioDoge() {
+        if (txtDestinoEnviarDoge == null || txtMontoEnviarDoge == null) return;
+        String dest = txtDestinoEnviarDoge.getText().trim();
+        lblResumenDestinoDoge.setText("Destinatario: " + (dest.isEmpty() ? "(Sin especificar)" : dest));
+
+        long fee = obtenerFeeKoinusSeleccionadoDoge();
+        long amountKoinus = 0;
+        try {
+            double doge = Double.parseDouble(txtMontoEnviarDoge.getText().trim().replace(",", "."));
+            amountKoinus = Math.max(0, Math.round(doge * 100_000_000.0));
+        } catch (Exception ignored) {}
+
+        lblKoinusCalculados.setText(String.format(java.util.Locale.US, "≈ %,d Koinus (1 DOGE = 100,000,000 Koinu)", amountKoinus));
+        lblResumenMontoDoge.setText(String.format(java.util.Locale.US, "Monto a enviar: %.4f DOGE (%,d Koinus)", (double) amountKoinus / 100_000_000.0, amountKoinus));
+        lblResumenFeeDoge.setText(String.format(java.util.Locale.US, "Comisión de red: %.2f DOGE (%,d Koinus)", (double) fee / 100_000_000.0, fee));
+
+        long total = amountKoinus + fee;
+        lblResumenTotalDoge.setText(String.format(java.util.Locale.US, "Total a debitar: %.4f DOGE (%,d Koinus)", (double) total / 100_000_000.0, total));
+    }
+
+    private void seleccionarDireccionDeLibretaDoge() {
+        List<DogeAddressEntry> list = DogecoinWalletService.cargarDireccionesEtiquetadas(userEmail, isTestnet);
+        if (list.isEmpty()) {
+            ToastNotification.show(this, "No hay direcciones guardadas en la libreta Dogecoin.", ToastNotification.Type.INFO);
+            return;
+        }
+
+        String[] opciones = new String[list.size()];
+        for (int i = 0; i < list.size(); i++) {
+            DogeAddressEntry e = list.get(i);
+            opciones[i] = (e.label.isEmpty() ? "(Sin título)" : e.label) + " - " + e.address;
+        }
+
+        String sel = (String) JOptionPane.showInputDialog(
+                this,
+                "Seleccione una dirección guardada en su libreta Dogecoin:",
+                "Libreta de Direcciones Dogecoin",
+                JOptionPane.PLAIN_MESSAGE,
+                null,
+                opciones,
+                opciones[0]
+        );
+
+        if (sel != null && !sel.isEmpty()) {
+            for (DogeAddressEntry e : list) {
+                if (sel.contains(e.address)) {
+                    txtDestinoEnviarDoge.setText(e.address);
+                    actualizarResumenEnvioDoge();
+                    break;
+                }
+            }
+        }
+    }
+
+    private void ejecutarEnvioDogecoin() {
+        if (currentWallet == null) {
+            ToastNotification.show(this, "Billetera Dogecoin no inicializada.", ToastNotification.Type.ERROR);
+            return;
+        }
+
+        String toAddr = txtDestinoEnviarDoge.getText().trim();
+        if (toAddr.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Por favor ingrese la dirección Dogecoin de destino.", "Dato Requerido", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        try {
+            LegacyAddress.fromBase58(DogecoinWalletService.getNetwork(isTestnet), toAddr);
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this,
+                    "La dirección de destino no es válida para la red " + (isTestnet ? "TESTNET" : "DOGECOIN MAINNET") + ":\n" + e.getMessage(),
+                    "Dirección Inválida", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        long amountKoinus;
+        try {
+            double doge = Double.parseDouble(txtMontoEnviarDoge.getText().trim().replace(",", "."));
+            amountKoinus = Math.round(doge * 100_000_000.0);
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this, "Por favor ingrese un monto numérico válido en DOGE.", "Monto Inválido", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        if (amountKoinus < 1_000_000L) { // 0.01 DOGE
+            JOptionPane.showMessageDialog(this, "El monto mínimo permitido es de 0.01 DOGE (1,000,000 Koinu).", "Monto Muy Bajo", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        long feeKoinus = obtenerFeeKoinusSeleccionadoDoge();
+        long totalReq = amountKoinus + feeKoinus;
+
+        if (currentBalanceKoinus < totalReq) {
+            JOptionPane.showMessageDialog(this,
+                    String.format(java.util.Locale.US,
+                            "Saldo insuficiente en la billetera Dogecoin.\n\nSaldo actual: %.4f DOGE (%,d Koinus)\nRequerido (monto + comisión): %.4f DOGE (%,d Koinus)\n\n" +
+                            "Si acaba de recibir fondos, espere a que la transacción obtenga confirmaciones en la blockchain.",
+                            (double) currentBalanceKoinus / 100_000_000.0, currentBalanceKoinus,
+                            (double) totalReq / 100_000_000.0, totalReq),
+                    "Saldo Insuficiente", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        // Autorización Zero-Trust con PIN
+        JPasswordField pfPin = new JPasswordField(4);
+        int opc = JOptionPane.showConfirmDialog(this,
+                new Object[]{
+                        "🔒 AUTORIZACIÓN DE TRANSFERENCIA ZERO-TRUST\n\n" +
+                        "Está a punto de transmitir fondos en " + (isTestnet ? "RED TESTNET" : "RED DOGECOIN MAINNET") + ":\n" +
+                        "• Destino: " + toAddr + "\n" +
+                        "• Monto: " + String.format(java.util.Locale.US, "%.4f DOGE (%,d Koinus)", (double) amountKoinus / 100_000_000.0, amountKoinus) + "\n" +
+                        "• Comisión de red: " + String.format(java.util.Locale.US, "%.2f DOGE", (double) feeKoinus / 100_000_000.0) + "\n\n" +
+                        "Ingrese su PIN de seguridad de 4 dígitos para firmar criptográficamente:",
+                        pfPin
+                },
+                "Confirmar Transmisión Dogecoin",
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.WARNING_MESSAGE);
+
+        if (opc != JOptionPane.OK_OPTION) return;
+
+        char[] pin = pfPin.getPassword();
+        char[] pinCheck = Arrays.copyOf(pin, pin.length);
+        if (SecuritySession.hasUserPin() && !SecuritySession.verifyUserPin(pinCheck)) {
+            JOptionPane.showMessageDialog(this, "PIN de autorización incorrecto. Operación cancelada.", "Acceso Denegado", JOptionPane.ERROR_MESSAGE);
+            Arrays.fill(pin, '0');
+            return;
+        }
+        Arrays.fill(pin, '0');
+
+        String fromAddr = currentWallet.currentAddress;
+        btnEjecutarEnvioDoge.setEnabled(false);
+        btnEjecutarEnvioDoge.setText("⏳ Firmando y transmitiendo a la red Dogecoin...");
+
+        SwingWorker<SendResult, Void> worker = new SwingWorker<>() {
+            @Override
+            protected SendResult doInBackground() {
+                return DogecoinWalletService.enviarDogecoin(currentWallet, fromAddr, toAddr, amountKoinus, feeKoinus, isTestnet);
+            }
+
+            @Override
+            protected void done() {
+                btnEjecutarEnvioDoge.setEnabled(true);
+                btnEjecutarEnvioDoge.setText("🚀 AUTORIZAR Y TRANSMITIR DOGECOIN AHORA");
+
+                try {
+                    SendResult res = get();
+                    if (res != null && res.success) {
+                        mostrarDialogoExitoDoge(res.txid, toAddr, amountKoinus, feeKoinus);
+                        txtDestinoEnviarDoge.setText("");
+                        txtMontoEnviarDoge.setText("0.0000");
+                        actualizarResumenEnvioDoge();
+                        refrescarDatosEnSegundoPlano();
+                        AuditService.log(userEmail, "DOGE_SEND_SUCCESS", "Enviados " + amountKoinus + " koinus a " + toAddr + " (TXID: " + res.txid + ")");
+                    } else {
+                        String errMsg = (res != null && res.errorMessage != null) ? res.errorMessage : "Error desconocido al procesar transacción Dogecoin.";
+                        JOptionPane.showMessageDialog(BilleteraDogecoin.this,
+                                "No se pudo transmitir la transacción Dogecoin:\n\n" + errMsg,
+                                "Error de Transmisión Dogecoin", JOptionPane.ERROR_MESSAGE);
+                        AuditService.log(userEmail, "DOGE_SEND_FAILED", "Fallo al enviar a " + toAddr + ": " + errMsg);
+                    }
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(BilleteraDogecoin.this,
+                            "Excepción durante el proceso de envío: " + ex.getMessage(),
+                            "Error de Red", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        };
+        worker.execute();
+    }
+
+    private void mostrarDialogoExitoDoge(String txid, String destino, long koinus, long feeKoinus) {
+        JDialog dlg = new JDialog(SwingUtilities.getWindowAncestor(this), "¡Transacción Dogecoin Transmitida!", JDialog.ModalityType.APPLICATION_MODAL);
+        dlg.setLayout(new BorderLayout());
+        dlg.setSize(530, 390);
+        dlg.setLocationRelativeTo(this);
+
+        JPanel p = new JPanel(new GridBagLayout());
+        p.setBackground(Color.WHITE);
+        p.setBorder(BorderFactory.createEmptyBorder(25, 25, 20, 25));
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.gridx = 0; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = 1.0;
+        int r = 0;
+
+        JLabel lblOk = new JLabel("✅ TRANSMISIÓN EXITOSA A LA RED DOGECOIN", SwingConstants.CENTER);
+        lblOk.putClientProperty(FlatClientProperties.STYLE, "font: bold 15; foreground: #107C10");
+        gbc.insets = new Insets(0, 0, 15, 0); gbc.gridy = r++;
+        p.add(lblOk, gbc);
+
+        JLabel lblDet = new JLabel(String.format(java.util.Locale.US,
+                "<html>Se han transmitido <b>%.4f DOGE</b> (%,d Koinus) hacia:<br/><code>%s</code><br/>Comisión minera incluida: %.2f DOGE</html>",
+                (double) koinus / 100_000_000.0, koinus, destino, (double) feeKoinus / 100_000_000.0));
+        lblDet.putClientProperty(FlatClientProperties.STYLE, "font: 12; foreground: #333333");
+        gbc.insets = new Insets(0, 0, 15, 0); gbc.gridy = r++;
+        p.add(lblDet, gbc);
+
+        JLabel lblTxidTitle = new JLabel("IDENTIFICADOR DE TRANSACCIÓN (TXID):");
+        lblTxidTitle.putClientProperty(FlatClientProperties.STYLE, "font: bold 11; foreground: #B45309");
+        gbc.insets = new Insets(0, 0, 4, 0); gbc.gridy = r++;
+        p.add(lblTxidTitle, gbc);
+
+        JTextField tfTxid = new JTextField(txid);
+        tfTxid.setEditable(false);
+        tfTxid.putClientProperty(FlatClientProperties.STYLE, "font: bold 12; background: #FFFBEB; border: 6,8,6,8");
+        gbc.insets = new Insets(0, 0, 20, 0); gbc.gridy = r++;
+        p.add(tfTxid, gbc);
+
+        JPanel btnRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 0));
+        btnRow.setOpaque(false);
+
+        JButton btnCopy = new JButton("📋 COPIAR TXID");
+        btnCopy.putClientProperty(FlatClientProperties.STYLE, "arc: 12; font: bold 12; margin: 8,16,8,16");
+        btnCopy.addActionListener(e -> {
+            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(txid), null);
+            ToastNotification.show(dlg, "TXID copiado al portapapeles.", ToastNotification.Type.SUCCESS);
+        });
+        btnRow.add(btnCopy);
+
+        JButton btnExplorer = new JButton("🌐 VER EN EXPLORADOR");
+        btnExplorer.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #D97706; foreground: #FFFFFF; font: bold 12; margin: 8,16,8,16");
+        btnExplorer.addActionListener(e -> {
+            try {
+                String url = isTestnet
+                        ? "https://blockexplorer.one/dogecoin/testnet/tx/" + txid
+                        : "https://dogechain.info/tx/" + txid;
+                if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                    Desktop.getDesktop().browse(new URI(url));
+                } else {
+                    ToastNotification.show(dlg, "URL: " + url, ToastNotification.Type.INFO);
+                }
+            } catch (Exception ex) {
+                ToastNotification.show(dlg, "No se pudo abrir el navegador.", ToastNotification.Type.WARNING);
+            }
+        });
+        btnRow.add(btnExplorer);
+
+        gbc.insets = new Insets(0, 0, 0, 0); gbc.gridy = r++;
+        p.add(btnRow, gbc);
+
+        dlg.add(p, BorderLayout.CENTER);
+        dlg.setVisible(true);
     }
 
     // --- PANEL 2: LIBRETA DE DIRECCIONES Y ETIQUETAS ---
@@ -1147,11 +1617,16 @@ public class BilleteraDogecoin extends JInternalFrame {
                 try {
                     long koinus = get();
                     if (koinus >= 0) {
+                        currentBalanceKoinus = koinus;
                         lblBalanceDoge.setText(DogecoinWalletService.koinusToDoge(koinus));
                         lblBalanceKoinus.setText(isTestnet 
                                 ? "≈ 0 Koinus (Red de pruebas Testnet)" 
                                 : "≈ " + String.format("%,d", koinus) + " Koinus");
+                        if (lblBalanceDispEnviar != null) {
+                            lblBalanceDispEnviar.setText(String.format(java.util.Locale.US, "Saldo disponible: %.4f DOGE (%,d Koinus)", (double) koinus / 100_000_000.0, koinus));
+                        }
                     } else {
+                        currentBalanceKoinus = 0;
                         lblBalanceDoge.setText("0.0000 DOGE");
                         lblBalanceKoinus.setText(isTestnet 
                                 ? "Red Testnet (Modo de desarrollo)" 

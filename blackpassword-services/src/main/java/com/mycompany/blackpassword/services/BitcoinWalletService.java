@@ -2,6 +2,7 @@ package com.mycompany.blackpassword.services;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.OutputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -27,12 +28,25 @@ import java.util.HashMap;
 import java.util.Map;
 import com.mycompany.blackpassword.crypto.RSALogica;
 import org.bitcoinj.core.Address;
+import org.bitcoinj.core.Coin;
+import org.bitcoinj.core.ECKey;
+import org.bitcoinj.core.LegacyAddress;
 import org.bitcoinj.core.NetworkParameters;
+import org.bitcoinj.core.SegwitAddress;
+import org.bitcoinj.core.Sha256Hash;
+import org.bitcoinj.core.Transaction;
+import org.bitcoinj.core.TransactionWitness;
+import org.bitcoinj.crypto.ChildNumber;
+import org.bitcoinj.crypto.DeterministicKey;
+import org.bitcoinj.crypto.HDKeyDerivation;
+import org.bitcoinj.crypto.TransactionSignature;
 import org.bitcoinj.params.MainNetParams;
 import org.bitcoinj.params.TestNet3Params;
 import org.bitcoinj.script.Script;
+import org.bitcoinj.script.ScriptBuilder;
 import org.bitcoinj.wallet.DeterministicSeed;
 import org.bitcoinj.wallet.Wallet;
+import org.bouncycastle.util.encoders.Hex;
 
 /**
  * Servicio Inteligente de Billetera Bitcoin HD (BIP-39 / BIP-84 SegWit) impulsado por BitcoinJ.
@@ -94,6 +108,29 @@ public class BitcoinWalletService {
             this.address = address;
             this.label = (label != null) ? label.trim() : "";
             this.date = (date != null) ? date : new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date());
+        }
+    }
+
+    public static class BtcUtxo {
+        public String txid;
+        public int vout;
+        public long value; // en Satoshis
+        public boolean confirmed;
+    }
+
+    public static class SendResult {
+        public boolean success;
+        public String txid;
+        public String errorMessage;
+        public long amountSats;
+        public long feeSats;
+
+        public SendResult(boolean success, String txid, String errorMessage, long amountSats, long feeSats) {
+            this.success = success;
+            this.txid = txid;
+            this.errorMessage = errorMessage;
+            this.amountSats = amountSats;
+            this.feeSats = feeSats;
         }
     }
 
@@ -674,6 +711,289 @@ public class BitcoinWalletService {
         if (sats < 0) return "-- BTC";
         double btc = (double) sats / 100_000_000.0;
         return String.format(java.util.Locale.US, "%.8f BTC", btc);
+    }
+
+    // --- ENVÍO DE TRANSACCIONES BITCOIN (SEGWIT P2WPKH / BIP-84) ---
+
+    /**
+     * Obtiene los UTXOs (salidas no gastadas) de una dirección Bitcoin desde mempool.space con fallback a blockstream.info.
+     */
+    public static List<BtcUtxo> obtenerUtxos(String address, boolean testnet) {
+        List<BtcUtxo> list = new ArrayList<>();
+        if (address == null || address.trim().isEmpty()) return list;
+
+        String baseUrl = testnet 
+            ? "https://mempool.space/testnet/api/address/" 
+            : "https://mempool.space/api/address/";
+
+        try {
+            URL url = new URL(baseUrl + address.trim() + "/utxo");
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(7000);
+            conn.setReadTimeout(7000);
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Blackpassword");
+
+            if (conn.getResponseCode() == 200) {
+                try (InputStreamReader reader = new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8)) {
+                    JsonArray arr = JsonParser.parseReader(reader).getAsJsonArray();
+                    for (JsonElement el : arr) {
+                        JsonObject o = el.getAsJsonObject();
+                        BtcUtxo u = new BtcUtxo();
+                        u.txid = o.get("txid").getAsString();
+                        u.vout = o.get("vout").getAsInt();
+                        u.value = o.get("value").getAsLong();
+                        u.confirmed = o.has("status") && o.getAsJsonObject("status").has("confirmed") && o.getAsJsonObject("status").get("confirmed").getAsBoolean();
+                        list.add(u);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[BitcoinWalletService] Mempool utxo error: " + e.getMessage());
+        }
+
+        // Fallback: blockstream.info
+        if (list.isEmpty()) {
+            try {
+                String bsUrl = testnet 
+                    ? "https://blockstream.info/testnet/api/address/" 
+                    : "https://blockstream.info/api/address/";
+                URL url = new URL(bsUrl + address.trim() + "/utxo");
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(7000);
+                conn.setReadTimeout(7000);
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Blackpassword");
+
+                if (conn.getResponseCode() == 200) {
+                    try (InputStreamReader reader = new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8)) {
+                        JsonArray arr = JsonParser.parseReader(reader).getAsJsonArray();
+                        for (JsonElement el : arr) {
+                            JsonObject o = el.getAsJsonObject();
+                            BtcUtxo u = new BtcUtxo();
+                            u.txid = o.get("txid").getAsString();
+                            u.vout = o.get("vout").getAsInt();
+                            u.value = o.get("value").getAsLong();
+                            u.confirmed = o.has("status") && o.getAsJsonObject("status").has("confirmed") && o.getAsJsonObject("status").get("confirmed").getAsBoolean();
+                            list.add(u);
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+        return list;
+    }
+
+    /**
+     * Transmite una transacción raw en hexadecimal a la red Bitcoin a través de mempool.space y blockstream.info.
+     */
+    public static String transmitirTransaccionRaw(String rawTxHex, boolean testnet) throws Exception {
+        String baseUrl = testnet 
+            ? "https://mempool.space/testnet/api/tx" 
+            : "https://mempool.space/api/tx";
+
+        try {
+            URL url = new URL(baseUrl);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(10000);
+            conn.setRequestProperty("Content-Type", "text/plain");
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Blackpassword");
+
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(rawTxHex.getBytes(StandardCharsets.UTF_8));
+            }
+
+            int code = conn.getResponseCode();
+            if (code == 200) {
+                try (InputStreamReader reader = new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8)) {
+                    StringBuilder sb = new StringBuilder();
+                    char[] buf = new char[256];
+                    int r;
+                    while ((r = reader.read(buf)) != -1) sb.append(buf, 0, r);
+                    return sb.toString().trim();
+                }
+            } else {
+                try (InputStreamReader reader = new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8)) {
+                    StringBuilder sb = new StringBuilder();
+                    char[] buf = new char[256];
+                    int r;
+                    while ((r = reader.read(buf)) != -1) sb.append(buf, 0, r);
+                    throw new Exception("Mempool error (" + code + "): " + sb.toString().trim());
+                }
+            }
+        } catch (Exception mempoolEx) {
+            // Fallback con Blockstream
+            String bsUrl = testnet 
+                ? "https://blockstream.info/testnet/api/tx" 
+                : "https://blockstream.info/api/tx";
+
+            URL url = new URL(bsUrl);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(10000);
+            conn.setRequestProperty("Content-Type", "text/plain");
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Blackpassword");
+
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(rawTxHex.getBytes(StandardCharsets.UTF_8));
+            }
+
+            int code = conn.getResponseCode();
+            if (code == 200) {
+                try (InputStreamReader reader = new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8)) {
+                    StringBuilder sb = new StringBuilder();
+                    char[] buf = new char[256];
+                    int r;
+                    while ((r = reader.read(buf)) != -1) sb.append(buf, 0, r);
+                    return sb.toString().trim();
+                }
+            } else {
+                try (InputStreamReader reader = new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8)) {
+                    StringBuilder sb = new StringBuilder();
+                    char[] buf = new char[256];
+                    int r;
+                    while ((r = reader.read(buf)) != -1) sb.append(buf, 0, r);
+                    throw new Exception("Blockstream error (" + code + "): " + sb.toString().trim());
+                }
+            }
+        }
+    }
+
+    /**
+     * Obtiene o deriva la llave privada ECKey asociada a la dirección de origen.
+     */
+    public static ECKey obtenerLlavePrivadaParaDireccion(Wallet wallet, String fromAddress, boolean testnet) {
+        NetworkParameters params = getNetwork(testnet);
+        Address targetAddr = Address.fromString(params, fromAddress);
+
+        try {
+            ECKey found = wallet.findKeyFromAddress(targetAddr);
+            if (found != null && found.hasPrivKey()) return found;
+        } catch (Exception ignored) {}
+
+        DeterministicSeed seed = wallet.getKeyChainSeed();
+        if (seed != null) {
+            DeterministicKey master = HDKeyDerivation.createMasterPrivateKey(seed.getSeedBytes());
+            int coinType = testnet ? 1 : 0;
+            DeterministicKey purpose84 = HDKeyDerivation.deriveChildKey(master, new ChildNumber(84, true));
+            DeterministicKey coin = HDKeyDerivation.deriveChildKey(purpose84, new ChildNumber(coinType, true));
+            DeterministicKey account = HDKeyDerivation.deriveChildKey(coin, new ChildNumber(0, true));
+            DeterministicKey external = HDKeyDerivation.deriveChildKey(account, new ChildNumber(0, false));
+
+            for (int i = 0; i < 50; i++) {
+                DeterministicKey child = HDKeyDerivation.deriveChildKey(external, new ChildNumber(i, false));
+                Address addr = SegwitAddress.fromKey(params, child);
+                if (addr.toString().equalsIgnoreCase(fromAddress)) {
+                    return child;
+                }
+                LegacyAddress leg = LegacyAddress.fromKey(params, child);
+                if (leg.toString().equalsIgnoreCase(fromAddress)) {
+                    return child;
+                }
+            }
+        }
+
+        return wallet.currentReceiveKey();
+    }
+
+    /**
+     * Construye, firma criptográficamente y transmite una transacción Bitcoin SegWit (P2WPKH).
+     */
+    public static SendResult enviarBitcoin(Wallet wallet, String fromAddress, String toAddress, long amountSats, long feeSats, boolean testnet) {
+        NetworkParameters params = getNetwork(testnet);
+
+        // 1. Validar dirección de destino
+        Address destAddr;
+        try {
+            destAddr = Address.fromString(params, toAddress.trim());
+        } catch (Exception e) {
+            return new SendResult(false, null, "Dirección de destino inválida para la red actual: " + e.getMessage(), amountSats, feeSats);
+        }
+
+        // 2. Validar monto
+        if (amountSats < 546) {
+            return new SendResult(false, null, "El monto a enviar debe ser superior al límite de polvo (dust: 546 Sats).", amountSats, feeSats);
+        }
+        if (feeSats < 250) {
+            feeSats = 500;
+        }
+
+        // 3. Obtener UTXOs disponibles
+        List<BtcUtxo> utxos = obtenerUtxos(fromAddress, testnet);
+        if (utxos.isEmpty()) {
+            return new SendResult(false, null, "No hay transacciones no gastadas (UTXOs) disponibles en la blockchain para esta dirección. Debe recibir fondos primero.", amountSats, feeSats);
+        }
+
+        long requiredTotal = amountSats + feeSats;
+        List<BtcUtxo> selectedUtxos = new ArrayList<>();
+        long totalIn = 0;
+
+        for (BtcUtxo u : utxos) {
+            selectedUtxos.add(u);
+            totalIn += u.value;
+            if (totalIn >= requiredTotal) break;
+        }
+
+        if (totalIn < requiredTotal) {
+            return new SendResult(false, null, 
+                String.format("Saldo insuficiente. Disponible: %d Sats. Requerido (monto + comisión): %d Sats.", totalIn, requiredTotal), 
+                amountSats, feeSats);
+        }
+
+        // 4. Obtener clave privada
+        ECKey signingKey = obtenerLlavePrivadaParaDireccion(wallet, fromAddress, testnet);
+        if (signingKey == null || !signingKey.hasPrivKey()) {
+            return new SendResult(false, null, "No se pudo obtener la llave privada para autorizar el gasto de la dirección.", amountSats, feeSats);
+        }
+
+        try {
+            // 5. Construir Transacción
+            Transaction tx = new Transaction(params);
+
+            // Output de Destino
+            tx.addOutput(Coin.valueOf(amountSats), destAddr);
+
+            // Output de Cambio (Vuelto)
+            long change = totalIn - amountSats - feeSats;
+            if (change > 546) {
+                Address changeAddr = Address.fromString(params, fromAddress);
+                tx.addOutput(Coin.valueOf(change), changeAddr);
+            }
+
+            // Agregar Inputs
+            for (BtcUtxo u : selectedUtxos) {
+                Sha256Hash prevHash = Sha256Hash.wrap(u.txid);
+                tx.addInput(prevHash, u.vout, new Script(new byte[0]));
+            }
+
+            // Firmar cada Input (SegWit P2WPKH)
+            Script scriptCode = ScriptBuilder.createP2PKHOutputScript(signingKey);
+            for (int i = 0; i < selectedUtxos.size(); i++) {
+                BtcUtxo u = selectedUtxos.get(i);
+                TransactionSignature sig = tx.calculateWitnessSignature(
+                    i, signingKey, scriptCode, Coin.valueOf(u.value), Transaction.SigHash.ALL, false
+                );
+                TransactionWitness witness = new TransactionWitness(2);
+                witness.setPush(0, sig.encodeToBitcoin());
+                witness.setPush(1, signingKey.getPubKey());
+                tx.getInput(i).setWitness(witness);
+            }
+
+            // 6. Serializar a hexadecimal
+            String rawTxHex = Hex.toHexString(tx.bitcoinSerialize());
+
+            // 7. Transmitir a la red blockchain
+            String txid = transmitirTransaccionRaw(rawTxHex, testnet);
+            return new SendResult(true, txid, null, amountSats, feeSats);
+
+        } catch (Exception ex) {
+            return new SendResult(false, null, "Error al firmar o transmitir transacción Bitcoin: " + ex.getMessage(), amountSats, feeSats);
+        }
     }
 
     // --- Helpers de Cifrado AES-256 GCM con PBKDF2 ---

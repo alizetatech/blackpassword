@@ -1,5 +1,6 @@
 package com.mycompany.blackpassword.services;
 
+import java.io.OutputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -24,13 +25,20 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mycompany.blackpassword.crypto.RSALogica;
+import org.bitcoinj.core.Coin;
 import org.bitcoinj.core.ECKey;
 import org.bitcoinj.core.LegacyAddress;
 import org.bitcoinj.core.NetworkParameters;
+import org.bitcoinj.core.Sha256Hash;
+import org.bitcoinj.core.Transaction;
 import org.bitcoinj.crypto.ChildNumber;
 import org.bitcoinj.crypto.DeterministicKey;
 import org.bitcoinj.crypto.HDKeyDerivation;
+import org.bitcoinj.crypto.TransactionSignature;
+import org.bitcoinj.script.Script;
+import org.bitcoinj.script.ScriptBuilder;
 import org.bitcoinj.wallet.DeterministicSeed;
+import org.bouncycastle.util.encoders.Hex;
 
 /**
  * Servicio Inteligente de Billetera Dogecoin HD (BIP-39 / BIP-44) para Blackpassword.
@@ -115,6 +123,29 @@ public class DogecoinWalletService {
             this.address = address;
             this.label = (label != null) ? label.trim() : "";
             this.date = (date != null) ? date : new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date());
+        }
+    }
+
+    public static class DogeUtxo {
+        public String txid;
+        public int vout;
+        public long value; // en Koinu
+        public boolean confirmed;
+    }
+
+    public static class SendResult {
+        public boolean success;
+        public String txid;
+        public String errorMessage;
+        public long amountKoinus;
+        public long feeKoinus;
+
+        public SendResult(boolean success, String txid, String errorMessage, long amountKoinus, long feeKoinus) {
+            this.success = success;
+            this.txid = txid;
+            this.errorMessage = errorMessage;
+            this.amountKoinus = amountKoinus;
+            this.feeKoinus = feeKoinus;
         }
     }
 
@@ -681,6 +712,216 @@ public class DogecoinWalletService {
         if (koinus < 0) return "-- DOGE";
         double doge = (double) koinus / 100_000_000.0;
         return String.format(java.util.Locale.US, "%.4f DOGE", doge);
+    }
+
+    // --- ENVÍO DE TRANSACCIONES DOGECOIN (LEGACY P2PKH / BIP-44) ---
+
+    /**
+     * Obtiene los UTXOs (salidas no gastadas) de una dirección Dogecoin desde BlockCypher API.
+     */
+    public static List<DogeUtxo> obtenerUtxos(String address, boolean testnet) {
+        List<DogeUtxo> list = new ArrayList<>();
+        if (address == null || address.trim().isEmpty() || testnet) return list;
+
+        try {
+            String endpoint = "https://api.blockcypher.com/v1/doge/main/addrs/" + address.trim() + "?unspentOnly=true";
+            URL url = new URL(endpoint);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(7000);
+            conn.setReadTimeout(7000);
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Blackpassword");
+
+            if (conn.getResponseCode() == 200) {
+                try (InputStreamReader reader = new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8)) {
+                    JsonObject root = JsonParser.parseReader(reader).getAsJsonObject();
+                    if (root.has("txrefs")) {
+                        JsonArray txs = root.getAsJsonArray("txrefs");
+                        for (int i = 0; i < txs.size(); i++) {
+                            JsonObject t = txs.get(i).getAsJsonObject();
+                            boolean spent = t.has("spent") && t.get("spent").getAsBoolean();
+                            if (!spent) {
+                                DogeUtxo u = new DogeUtxo();
+                                u.txid = t.get("tx_hash").getAsString();
+                                u.vout = t.has("tx_output_n") ? t.get("tx_output_n").getAsInt() : 0;
+                                u.value = t.get("value").getAsLong();
+                                int conf = t.has("confirmations") ? t.get("confirmations").getAsInt() : 0;
+                                u.confirmed = conf > 0;
+                                list.add(u);
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[DogecoinWalletService] BlockCypher utxo error: " + e.getMessage());
+        }
+        return list;
+    }
+
+    /**
+     * Transmite una transacción raw en hexadecimal a la red Dogecoin a través de BlockCypher y Dogechain.info.
+     */
+    public static String transmitirTransaccionRaw(String rawTxHex, boolean testnet) throws Exception {
+        if (testnet) {
+            throw new UnsupportedOperationException("El envío en red Testnet de Dogecoin requiere faucet/nodo de pruebas activo.");
+        }
+
+        // 1. Intento con BlockCypher push API
+        try {
+            String endpoint = "https://api.blockcypher.com/v1/doge/main/txs/push";
+            URL url = new URL(endpoint);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(10000);
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Blackpassword");
+
+            JsonObject payload = new JsonObject();
+            payload.addProperty("tx", rawTxHex);
+            byte[] body = payload.toString().getBytes(StandardCharsets.UTF_8);
+
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(body);
+            }
+
+            int code = conn.getResponseCode();
+            if (code == 200 || code == 201) {
+                try (InputStreamReader reader = new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8)) {
+                    JsonObject resp = JsonParser.parseReader(reader).getAsJsonObject();
+                    if (resp.has("tx") && resp.getAsJsonObject("tx").has("hash")) {
+                        return resp.getAsJsonObject("tx").get("hash").getAsString();
+                    }
+                }
+            } else {
+                try (InputStreamReader reader = new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8)) {
+                    JsonObject err = JsonParser.parseReader(reader).getAsJsonObject();
+                    if (err.has("error")) {
+                        throw new Exception(err.get("error").getAsString());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[DogecoinWalletService] BlockCypher push error: " + e.getMessage());
+            throw e;
+        }
+
+        throw new Exception("No se recibió confirmación de envío del nodo Dogecoin.");
+    }
+
+    /**
+     * Deriva la llave privada ECKey asociada a la dirección de origen Dogecoin (BIP-44 m/44'/3'/0'/0/i).
+     */
+    public static ECKey obtenerLlavePrivada(DogeWalletHolder wallet, String fromAddress, boolean testnet) {
+        NetworkParameters params = getNetwork(testnet);
+        DeterministicSeed seed = new DeterministicSeed(wallet.mnemonic, null, "", wallet.creationTime);
+        DeterministicKey master = HDKeyDerivation.createMasterPrivateKey(seed.getSeedBytes());
+        DeterministicKey purpose44 = HDKeyDerivation.deriveChildKey(master, new ChildNumber(44, true));
+        DeterministicKey coinType3 = HDKeyDerivation.deriveChildKey(purpose44, new ChildNumber(3, true));
+        DeterministicKey account0 = HDKeyDerivation.deriveChildKey(coinType3, new ChildNumber(0, true));
+        DeterministicKey external0 = HDKeyDerivation.deriveChildKey(account0, ChildNumber.ZERO);
+
+        for (int i = 0; i <= Math.max(wallet.lastIndex, 30); i++) {
+            DeterministicKey child = HDKeyDerivation.deriveChildKey(external0, new ChildNumber(i, false));
+            LegacyAddress addr = LegacyAddress.fromKey(params, child);
+            if (addr.toBase58().equalsIgnoreCase(fromAddress)) {
+                return child;
+            }
+        }
+        return HDKeyDerivation.deriveChildKey(external0, ChildNumber.ZERO);
+    }
+
+    /**
+     * Construye, firma criptográficamente y transmite una transacción Dogecoin P2PKH.
+     */
+    public static SendResult enviarDogecoin(DogeWalletHolder wallet, String fromAddress, String toAddress, long amountKoinus, long feeKoinus, boolean testnet) {
+        NetworkParameters params = getNetwork(testnet);
+
+        // 1. Validar dirección destino
+        LegacyAddress destAddr;
+        try {
+            destAddr = LegacyAddress.fromBase58(params, toAddress.trim());
+        } catch (Exception e) {
+            return new SendResult(false, null, "Dirección Dogecoin inválida para esta red: " + e.getMessage(), amountKoinus, feeKoinus);
+        }
+
+        // 2. Validar monto (mínimo 0.01 DOGE = 1,000,000 Koinu)
+        if (amountKoinus < 1_000_000) {
+            return new SendResult(false, null, "El monto mínimo a enviar es 0.01 DOGE.", amountKoinus, feeKoinus);
+        }
+        if (feeKoinus < 50_000_000) {
+            feeKoinus = 100_000_000; // 1 DOGE comisión estándar
+        }
+
+        // 3. Obtener UTXOs disponibles
+        List<DogeUtxo> utxos = obtenerUtxos(fromAddress, testnet);
+        if (utxos.isEmpty()) {
+            return new SendResult(false, null, "No hay saldo confirmado ni UTXOs disponibles en la blockchain para esta dirección. Debe recibir DOGE primero.", amountKoinus, feeKoinus);
+        }
+
+        long requiredTotal = amountKoinus + feeKoinus;
+        List<DogeUtxo> selectedUtxos = new ArrayList<>();
+        long totalIn = 0;
+
+        for (DogeUtxo u : utxos) {
+            selectedUtxos.add(u);
+            totalIn += u.value;
+            if (totalIn >= requiredTotal) break;
+        }
+
+        if (totalIn < requiredTotal) {
+            return new SendResult(false, null,
+                String.format(java.util.Locale.US, "Saldo insuficiente. Disponible: %.4f DOGE. Requerido (monto + comisión): %.4f DOGE.",
+                    (double) totalIn / 100_000_000.0, (double) requiredTotal / 100_000_000.0),
+                amountKoinus, feeKoinus);
+        }
+
+        // 4. Obtener clave privada
+        ECKey key = obtenerLlavePrivada(wallet, fromAddress, testnet);
+        if (key == null) {
+            return new SendResult(false, null, "No se pudo derivar la llave privada Dogecoin para firmar el envío.", amountKoinus, feeKoinus);
+        }
+
+        try {
+            // 5. Construir Transacción
+            Transaction tx = new Transaction(params);
+
+            // Destino
+            tx.addOutput(Coin.valueOf(amountKoinus), destAddr);
+
+            // Cambio (vuelto)
+            long change = totalIn - amountKoinus - feeKoinus;
+            LegacyAddress changeAddr = LegacyAddress.fromBase58(params, fromAddress);
+            if (change > 1_000_000) {
+                tx.addOutput(Coin.valueOf(change), changeAddr);
+            }
+
+            // Inputs
+            Script scriptPubKey = ScriptBuilder.createOutputScript(changeAddr);
+            for (DogeUtxo u : selectedUtxos) {
+                Sha256Hash prevHash = Sha256Hash.wrap(u.txid);
+                tx.addInput(prevHash, u.vout, scriptPubKey);
+            }
+
+            // Firmar inputs (P2PKH)
+            for (int i = 0; i < selectedUtxos.size(); i++) {
+                TransactionSignature sig = tx.calculateSignature(i, key, scriptPubKey, Transaction.SigHash.ALL, false);
+                Script inputScript = ScriptBuilder.createInputScript(sig, key);
+                tx.getInput(i).setScriptSig(inputScript);
+            }
+
+            // 6. Serializar a hex
+            String rawTxHex = Hex.toHexString(tx.bitcoinSerialize());
+
+            // 7. Transmitir a la red Dogecoin
+            String txid = transmitirTransaccionRaw(rawTxHex, testnet);
+            return new SendResult(true, txid, null, amountKoinus, feeKoinus);
+
+        } catch (Exception ex) {
+            return new SendResult(false, null, "Error al firmar o transmitir transacción Dogecoin: " + ex.getMessage(), amountKoinus, feeKoinus);
+        }
     }
 
     // --- Helpers Criptográficos AES-256 GCM con PBKDF2 ---
