@@ -10,6 +10,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.PrivateKey;
+import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -449,7 +451,18 @@ public class LocalDatabaseService {
             bb.put(enc);
             byte[] encryptedPayload = bb.array();
 
-            String encB64 = Base64.getEncoder().encodeToString(encryptedPayload);
+            // Capa Híbrida Asimétrica RSA-4096 (Estándar Bóveda de Contraseñas)
+            byte[] payloadToStore = encryptedPayload;
+            PublicKey pub = SecuritySession.getPublicKey();
+            if (pub != null) {
+                try {
+                    payloadToStore = RSALogica.cifrarBytesHibrido(encryptedPayload, pub);
+                } catch (Exception ex) {
+                    System.err.println("[LocalDB] Nota: Error aplicando envoltura RSA a semilla BTC: " + ex.getMessage());
+                }
+            }
+
+            String encB64 = Base64.getEncoder().encodeToString(payloadToStore);
             String saltB64 = Base64.getEncoder().encodeToString(salt);
 
             String userHash = RSALogica.hashConstantToHex(userEmail.trim().toLowerCase());
@@ -579,6 +592,17 @@ public class LocalDatabaseService {
         SecretKeySpec key = RSALogica.derivarLlavePBKDF2(pin, salt, 600000);
 
         byte[] rawData = Base64.getDecoder().decode(entry.semillaCifrada);
+
+        // Si la semilla tiene envoltura RSA-4096, se descifra primero con la llave privada RSA de la sesión
+        PrivateKey priv = SecuritySession.getPrivateKey();
+        if (priv != null) {
+            try {
+                rawData = RSALogica.descifrarBytesHibrido(rawData, priv);
+            } catch (Exception ignored) {
+                // Retrocompatibilidad con semillas previas sin capa RSA
+            }
+        }
+
         if (rawData.length < GCM_IV_SIZE) {
             throw new IllegalArgumentException("Datos corruptos de semilla.");
         }
@@ -826,7 +850,18 @@ public class LocalDatabaseService {
             bb.put(enc);
             byte[] encryptedPayload = bb.array();
 
-            String encB64 = Base64.getEncoder().encodeToString(encryptedPayload);
+            // Capa Híbrida Asimétrica RSA-4096 (Estándar Bóveda de Contraseñas)
+            byte[] payloadToStore = encryptedPayload;
+            PublicKey pub = SecuritySession.getPublicKey();
+            if (pub != null) {
+                try {
+                    payloadToStore = RSALogica.cifrarBytesHibrido(encryptedPayload, pub);
+                } catch (Exception ex) {
+                    System.err.println("[LocalDB] Nota: Error aplicando envoltura RSA a semilla Doge: " + ex.getMessage());
+                }
+            }
+
+            String encB64 = Base64.getEncoder().encodeToString(payloadToStore);
             String saltB64 = Base64.getEncoder().encodeToString(salt);
 
             String userHash = RSALogica.hashConstantToHex(userEmail.trim().toLowerCase());
@@ -956,6 +991,17 @@ public class LocalDatabaseService {
         SecretKeySpec key = RSALogica.derivarLlavePBKDF2(pin, salt, 600000);
 
         byte[] rawData = Base64.getDecoder().decode(entry.semillaCifrada);
+
+        // Si la semilla tiene envoltura RSA-4096, se descifra primero con la llave privada RSA de la sesión
+        PrivateKey priv = SecuritySession.getPrivateKey();
+        if (priv != null) {
+            try {
+                rawData = RSALogica.descifrarBytesHibrido(rawData, priv);
+            } catch (Exception ignored) {
+                // Retrocompatibilidad con semillas previas sin capa RSA
+            }
+        }
+
         if (rawData.length < GCM_IV_SIZE) {
             throw new IllegalArgumentException("Datos corruptos de semilla Doge.");
         }

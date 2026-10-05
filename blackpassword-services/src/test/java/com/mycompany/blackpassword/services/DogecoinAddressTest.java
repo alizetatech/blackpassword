@@ -105,4 +105,57 @@ public class DogecoinAddressTest {
         assertNotNull(hex);
         System.out.println("Bitcoin SegWit raw tx hex: " + hex);
     }
+
+    @Test
+    public void testCifradoHibridoRsaWalletYDoge() throws Exception {
+        // 1. Generar par de llaves RSA
+        java.security.KeyPairGenerator kpg = java.security.KeyPairGenerator.getInstance("RSA");
+        kpg.initialize(2048); // 2048 para rapidez en test
+        java.security.KeyPair kp = kpg.generateKeyPair();
+
+        // 2. Establecer en sesión de seguridad
+        SecuritySession.setKeySession(kp.getPublic(), kp.getPrivate(), null);
+
+        // 3. Crear y cifrar billetera Doge
+        java.util.List<String> words = java.util.Arrays.asList("abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "about");
+        DogecoinWalletService.DogeWalletHolder holder = DogecoinWalletService.restaurarBilletera(words, false);
+        char[] pin = new char[]{'1', '2', '3', '4'};
+        String testEmail = "test_rsa@blackpassword.com";
+
+        DogecoinWalletService.guardarBilleteraCifrada(holder, testEmail, pin, false);
+
+        // 4. Cargar con RSA en sesión activa
+        DogecoinWalletService.DogeWalletHolder loaded = DogecoinWalletService.cargarBilleteraCifrada(testEmail, pin, false);
+        assertNotNull(loaded);
+        assertEquals(holder.currentAddress, loaded.currentAddress);
+        System.out.println("Billetera Doge descifrada exitosamente con RSA + PIN: " + loaded.currentAddress);
+
+        // 5. Test Bóveda de Semillas con RSA
+        boolean savedSeed = LocalDatabaseService.guardarSemillaDogeWallet(testEmail, "TEST-DOGE-RSA", "MAINNET", holder.currentAddress, String.join(" ", words), pin);
+        assertTrue(savedSeed);
+
+        java.util.List<LocalDatabaseService.DogeSeedEntry> seeds = LocalDatabaseService.obtenerSemillasDogeWallet(testEmail);
+        assertFalse(seeds.isEmpty());
+        String decryptedPhrase = LocalDatabaseService.descifrarSemillaDogeWallet(seeds.get(0), pin);
+        assertEquals(String.join(" ", words), decryptedPhrase);
+        System.out.println("Semilla Doge descifrada exitosamente con RSA + PIN.");
+
+        // 6. Test Billetera Bitcoin con RSA + PIN
+        org.bitcoinj.wallet.Wallet btcWallet = BitcoinWalletService.restaurarBilletera(words, true);
+        BitcoinWalletService.guardarBilleteraCifrada(btcWallet, testEmail, pin, true);
+
+        org.bitcoinj.wallet.Wallet loadedBtc = BitcoinWalletService.cargarBilleteraCifrada(testEmail, pin, true);
+        assertNotNull(loadedBtc);
+        assertEquals(BitcoinWalletService.obtenerDireccion(btcWallet), BitcoinWalletService.obtenerDireccion(loadedBtc));
+        System.out.println("Billetera Bitcoin descifrada exitosamente con RSA + PIN: " + BitcoinWalletService.obtenerDireccion(loadedBtc));
+
+        // 7. Test Bóveda de Semillas BTC con RSA
+        boolean savedBtcSeed = LocalDatabaseService.guardarSemillaWallet(testEmail, "TEST-BTC-RSA", "TESTNET", BitcoinWalletService.obtenerDireccion(btcWallet), String.join(" ", words), pin);
+        assertTrue(savedBtcSeed);
+        java.util.List<LocalDatabaseService.BtcSeedEntry> btcSeeds = LocalDatabaseService.obtenerSemillasWallet(testEmail);
+        assertFalse(btcSeeds.isEmpty());
+        String decryptedBtcPhrase = LocalDatabaseService.descifrarSemillaWallet(btcSeeds.get(0), pin);
+        assertEquals(String.join(" ", words), decryptedBtcPhrase);
+        System.out.println("Semilla Bitcoin descifrada exitosamente con RSA + PIN.");
+    }
 }

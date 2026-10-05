@@ -6,6 +6,8 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.security.PrivateKey;
+import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -256,7 +258,19 @@ public class DogecoinWalletService {
         String key = userEmail.trim().toLowerCase() + (testnet ? "_doge_testnet" : "_doge_mainnet");
         byte[] salt = ("DOGE_SALT_" + key).getBytes(StandardCharsets.UTF_8);
         byte[] encryptedPayload = cifrarBytes(rawBytes, pin, salt);
-        String encoded = java.util.Base64.getEncoder().encodeToString(encryptedPayload);
+
+        // Capa Híbrida Asimétrica RSA-4096 (Estándar Bóveda de Contraseñas)
+        byte[] finalPayload = encryptedPayload;
+        PublicKey pubKey = SecuritySession.getPublicKey();
+        if (pubKey != null) {
+            try {
+                finalPayload = RSALogica.cifrarBytesHibrido(encryptedPayload, pubKey);
+            } catch (Exception ex) {
+                System.err.println("[DogecoinWalletService] Nota: Error aplicando capa RSA, usando capa simétrica: " + ex.getMessage());
+            }
+        }
+
+        String encoded = java.util.Base64.getEncoder().encodeToString(finalPayload);
 
         // 1. Guardar en Base de Datos Local SQLite como respaldo
         LocalDatabaseService.guardarDogeWalletActiva(userEmail, testnet, encoded);
@@ -324,6 +338,17 @@ public class DogecoinWalletService {
         }
 
         byte[] encryptedPayload = java.util.Base64.getDecoder().decode(encoded);
+
+        // Si el payload contiene envoltura RSA-4096, se descifra primero con la llave privada RSA de sesión
+        PrivateKey privKey = SecuritySession.getPrivateKey();
+        if (privKey != null) {
+            try {
+                encryptedPayload = RSALogica.descifrarBytesHibrido(encryptedPayload, privKey);
+            } catch (Exception ignored) {
+                // Retrocompatibilidad con payloads sin envoltura RSA
+            }
+        }
+
         byte[] salt = ("DOGE_SALT_" + key).getBytes(StandardCharsets.UTF_8);
 
         byte[] decryptedBytes = null;
