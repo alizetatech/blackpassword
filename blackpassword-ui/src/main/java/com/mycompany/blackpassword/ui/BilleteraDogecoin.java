@@ -375,8 +375,8 @@ public class BilleteraDogecoin extends JInternalFrame {
 
     // --- PANEL DE ENVÍO Y TRANSFERENCIA DOGECOIN ---
 
-    private JPanel crearPanelEnviar() {
-        JPanel main = new JPanel(new BorderLayout(0, 15));
+    private JScrollPane crearPanelEnviar() {
+        ResponsiveScrollablePanel main = new ResponsiveScrollablePanel(new BorderLayout(0, 15));
         main.setOpaque(false);
         main.setBorder(BorderFactory.createEmptyBorder(20, 25, 20, 25));
 
@@ -545,7 +545,16 @@ public class BilleteraDogecoin extends JInternalFrame {
         txtDestinoEnviarDoge.getDocument().addDocumentListener(docL);
 
         main.add(formCard, BorderLayout.CENTER);
-        return main;
+
+        JScrollPane scroll = new JScrollPane(main);
+        scroll.setBorder(null);
+        scroll.setOpaque(false);
+        scroll.getViewport().setOpaque(false);
+        scroll.getVerticalScrollBar().setUnitIncrement(16);
+        scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        scroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
+
+        return scroll;
     }
 
     private long obtenerFeeKoinusSeleccionadoDoge() {
@@ -1677,6 +1686,45 @@ public class BilleteraDogecoin extends JInternalFrame {
         List<DogeAddressEntry> list = DogecoinWalletService.cargarDireccionesEtiquetadas(userEmail, isTestnet);
         for (DogeAddressEntry e : list) {
             addressTableModel.addRow(new Object[]{e.label, e.address, e.date});
+        }
+    }
+
+    /**
+     * Panel adaptable para JScrollPane que responde dinámicamente al ancho de la ventana
+     * y habilita scroll vertical fluido cuando la altura excede el área visible.
+     */
+    private static class ResponsiveScrollablePanel extends JPanel implements Scrollable {
+        public ResponsiveScrollablePanel(LayoutManager layout) {
+            super(layout);
+        }
+
+        @Override
+        public Dimension getPreferredScrollableViewportSize() {
+            return getPreferredSize();
+        }
+
+        @Override
+        public int getScrollableUnitIncrement(Rectangle visibleRect, int orientation, int direction) {
+            return 16;
+        }
+
+        @Override
+        public int getScrollableBlockIncrement(Rectangle visibleRect, int orientation, int direction) {
+            return 64;
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportWidth() {
+            return true;
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportHeight() {
+            Container parent = getParent();
+            if (parent instanceof JViewport) {
+                return parent.getHeight() > getPreferredSize().height;
+            }
+            return false;
         }
     }
 }

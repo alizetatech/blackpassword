@@ -13,6 +13,7 @@ import com.mycompany.blackpassword.services.SecuritySession;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Container;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
@@ -20,6 +21,8 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import java.awt.Insets;
+import java.awt.LayoutManager;
+import java.awt.Rectangle;
 import java.awt.Toolkit;
 import java.awt.datatransfer.StringSelection;
 import java.awt.image.BufferedImage;
@@ -38,6 +41,9 @@ import javax.swing.JScrollPane;
 import javax.swing.JTabbedPane;
 import javax.swing.JTable;
 import javax.swing.JTextField;
+import javax.swing.JViewport;
+import javax.swing.Scrollable;
+import javax.swing.ScrollPaneConstants;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
@@ -399,8 +405,8 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
 
     // --- PANEL DE ENVÍO Y TRANSFERENCIA BITCOIN ---
 
-    private JPanel crearPanelEnviar() {
-        JPanel main = new JPanel(new BorderLayout(0, 15));
+    private JScrollPane crearPanelEnviar() {
+        ResponsiveScrollablePanel main = new ResponsiveScrollablePanel(new BorderLayout(0, 15));
         main.setOpaque(false);
         main.setBorder(BorderFactory.createEmptyBorder(20, 25, 20, 25));
 
@@ -569,7 +575,16 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
         txtDestinoEnviarBtc.getDocument().addDocumentListener(docL);
 
         main.add(formCard, BorderLayout.CENTER);
-        return main;
+
+        JScrollPane scroll = new JScrollPane(main);
+        scroll.setBorder(null);
+        scroll.setOpaque(false);
+        scroll.getViewport().setOpaque(false);
+        scroll.getVerticalScrollBar().setUnitIncrement(16);
+        scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        scroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
+
+        return scroll;
     }
 
     private long obtenerFeeSatsSeleccionadoBtc() {
@@ -1815,5 +1830,44 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
         dlg.setLocationRelativeTo(this);
         dlg.add(crearPanelBovedaSemillas(), BorderLayout.CENTER);
         dlg.setVisible(true);
+    }
+
+    /**
+     * Panel adaptable para JScrollPane que responde dinámicamente al ancho de la ventana
+     * y habilita scroll vertical fluido cuando la altura excede el área visible.
+     */
+    private static class ResponsiveScrollablePanel extends JPanel implements Scrollable {
+        public ResponsiveScrollablePanel(LayoutManager layout) {
+            super(layout);
+        }
+
+        @Override
+        public Dimension getPreferredScrollableViewportSize() {
+            return getPreferredSize();
+        }
+
+        @Override
+        public int getScrollableUnitIncrement(Rectangle visibleRect, int orientation, int direction) {
+            return 16;
+        }
+
+        @Override
+        public int getScrollableBlockIncrement(Rectangle visibleRect, int orientation, int direction) {
+            return 64;
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportWidth() {
+            return true;
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportHeight() {
+            Container parent = getParent();
+            if (parent instanceof JViewport) {
+                return parent.getHeight() > getPreferredSize().height;
+            }
+            return false;
+        }
     }
 }
