@@ -3,6 +3,7 @@ package com.mycompany.blackpassword.ui;
 import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.mycompany.blackpassword.core.util.AnimationUtils;
+import com.mycompany.blackpassword.core.util.ToastNotification;
 import com.mycompany.blackpassword.services.AuditService;
 import com.mycompany.blackpassword.services.LocalDatabaseService;
 import com.mycompany.blackpassword.services.RemoteKillService;
@@ -37,6 +38,8 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
     private JPanel privacyShield;
     private boolean camouflageActive = false;
     private JLabel lblSecurityStatus;
+    private boolean isUserNameHidden = false;
+    private JButton btnUser;
 
     public MenuPrincipal(String nombre, String email) {
         this.userName = nombre;
@@ -55,6 +58,7 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
             setupPanicShortcut();
             setupFocusSecurity();
             setupCamouflageShortcut();
+            setupHideUserShortcut();
             setupRemoteKillMonitoring();
         } catch (SecurityException se) {
             ejecutarPanico(); 
@@ -140,6 +144,13 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
         java.awt.Window parent = javax.swing.SwingUtilities.getWindowAncestor(this);
         if (parent instanceof FramePrincipal fp) fp.setCamouflageMode(camouflageActive);
         for (JInternalFrame f : internalDesktop.getAllFrames()) f.setVisible(!camouflageActive);
+    }
+
+    private void setupHideUserShortcut() {
+        this.getInputMap(javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(KeyEvent.VK_U, KeyEvent.CTRL_DOWN_MASK), "toggleHideUser");
+        this.getActionMap().put("toggleHideUser", new javax.swing.AbstractAction() {
+            @Override public void actionPerformed(java.awt.event.ActionEvent e) { toggleVisibilidadNombre(); }
+        });
     }
 
     private void setupInactivityTimer() {
@@ -240,6 +251,8 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
         securityMenu.add(createMenuItem("GENERADOR RSA", "rsa.svg", e -> abrirVentanaUnica(GeneradorLlavesRsa.class, () -> new GeneradorLlavesRsa())));
         securityMenu.add(createMenuItem("GENERADOR CEK (AES-256)", "security.svg", e -> abrirVentanaUnica(GeneradorCek.class, () -> new GeneradorCek())));
         securityMenu.add(createMenuItem("ENCRIPTADOR ALGORITMOS", "shield.svg", e -> abrirVentanaUnica(EncriptadorDeAlgoritmos.class, () -> new EncriptadorDeAlgoritmos())));
+        securityMenu.addSeparator();
+        securityMenu.add(createMenuItem("MODO PRIVACIDAD (OCULTAR NOMBRE)", "shield.svg", e -> toggleVisibilidadNombre()));
         
         btnSecurity.addActionListener(e -> securityMenu.show(btnSecurity, 0, btnSecurity.getHeight()));
         leftGroup.add(btnSecurity);
@@ -265,8 +278,23 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
         
         rightGroup.add(createNavButton("SALIR", "unlock.svg", e -> ejecutarCierreSesion()));
         
-        JButton btnUser = createNavButton(userName.toUpperCase(), "user.svg", null);
-        btnUser.putClientProperty(FlatClientProperties.STYLE, "foreground: #0078D4; font: bold; background: #F3F9FF; arc: 20");
+        isUserNameHidden = prefs.getBoolean("hide_username_" + userEmail, false);
+        btnUser = createNavButton("", "user.svg", e -> toggleVisibilidadNombre());
+        actualizarBotonUsuario();
+        
+        JPopupMenu userPopup = new JPopupMenu();
+        JMenuItem miToggle = new JMenuItem(isUserNameHidden ? "👁️ Revelar Nombre" : "🙈 Ocultar Nombre");
+        miToggle.addActionListener(e -> toggleVisibilidadNombre());
+        userPopup.add(miToggle);
+        
+        JMenuItem miCopy = new JMenuItem("📋 Copiar Nombre");
+        miCopy.addActionListener(e -> {
+            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(userName), null);
+            ToastNotification.show(this, "Nombre copiado al portapapeles.", ToastNotification.Type.SUCCESS);
+        });
+        userPopup.add(miCopy);
+        
+        btnUser.setComponentPopupMenu(userPopup);
         rightGroup.add(btnUser);
         
         buttonsContainer.add(leftGroup, BorderLayout.WEST);
@@ -302,6 +330,49 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
         } catch (Exception e) {}
         if (action != null) item.addActionListener(action);
         return item;
+    }
+
+    private void actualizarBotonUsuario() {
+        if (btnUser == null) return;
+        
+        String displayText = isUserNameHidden ? "••••••••" : userName.toUpperCase();
+        String iconName = isUserNameHidden ? "shield.svg" : "user.svg";
+        String tooltip = isUserNameHidden 
+                ? "Modo Privacidad Activo: Clic para revelar su nombre de usuario (Ctrl+U)" 
+                : "Modo Privacidad: Clic para ocultar su nombre de usuario (Ctrl+U)";
+        
+        btnUser.setText(displayText);
+        btnUser.setToolTipText(tooltip);
+        try {
+            FlatSVGIcon icon = new FlatSVGIcon("img/" + iconName, 20, 20);
+            if (icon != null) btnUser.setIcon(icon);
+        } catch (Exception ignored) {}
+        
+        if (isUserNameHidden) {
+            btnUser.putClientProperty(FlatClientProperties.STYLE, "foreground: #6B7280; font: bold; background: #F1F5F9; hoverBackground: #E2E8F0; arc: 20");
+        } else {
+            btnUser.putClientProperty(FlatClientProperties.STYLE, "foreground: #0078D4; font: bold; background: #F3F9FF; hoverBackground: #E0EFFF; arc: 20");
+        }
+        
+        if (btnUser.getComponentPopupMenu() != null && btnUser.getComponentPopupMenu().getComponentCount() > 0) {
+            Component c = btnUser.getComponentPopupMenu().getComponent(0);
+            if (c instanceof JMenuItem mi) {
+                mi.setText(isUserNameHidden ? "👁️ Revelar Nombre" : "🙈 Ocultar Nombre");
+            }
+        }
+        btnUser.revalidate();
+        btnUser.repaint();
+    }
+
+    private void toggleVisibilidadNombre() {
+        isUserNameHidden = !isUserNameHidden;
+        prefs.putBoolean("hide_username_" + userEmail, isUserNameHidden);
+        actualizarBotonUsuario();
+        if (isUserNameHidden) {
+            ToastNotification.show(this, "Nombre de usuario ocultado (Modo Privacidad activo).", ToastNotification.Type.INFO);
+        } else {
+            ToastNotification.show(this, "Nombre de usuario visible.", ToastNotification.Type.INFO);
+        }
     }
 
     private void solicitarPinYAcceder(String moduloDesc, String logPrefix, Runnable onSuccess) {
