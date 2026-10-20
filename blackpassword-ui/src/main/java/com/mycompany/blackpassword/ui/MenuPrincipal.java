@@ -243,6 +243,7 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
         leftGroup.add(createNavButton("IMÁGENES", "images.svg", e -> solicitarPinYAcceder("la Galería de Imágenes", "IMAGES", () -> abrirVentanaUnica(Imagenes.class, () -> new Imagenes(userEmail, this)))));
         leftGroup.add(createNavButton("WALLET BTC", "key.svg", e -> solicitarPinYAcceder("la Billetera Bitcoin", "BITCOIN_WALLET", () -> abrirVentanaUnica(BilleteraBitcoin.class, () -> new BilleteraBitcoin(userEmail)))));
         leftGroup.add(createNavButton("WALLET DOGE", "key.svg", e -> solicitarPinYAcceder("la Billetera Dogecoin", "DOGECOIN_WALLET", () -> abrirVentanaUnica(BilleteraDogecoin.class, () -> new BilleteraDogecoin(userEmail)))));
+        leftGroup.add(createNavButton("VPN WIREGUARD", "shield.svg", e -> solicitarPinYAcceder("la VPN WireGuard", "WIREGUARD_VPN", () -> abrirVentanaUnica(VpnWireguard.class, () -> new VpnWireguard(userEmail)))));
         
         // Botón de Seguridad con Menú Desplegable
         JButton btnSecurity = createNavButton("SEGURIDAD", "security.svg", null);
@@ -260,6 +261,7 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
         // Botón de Herramientas con Menú Desplegable
         JButton btnTools = createNavButton("HERRAMIENTAS", "report.svg", null);
         JPopupMenu toolsMenu = new JPopupMenu();
+        toolsMenu.add(createMenuItem("TÚNEL WIREGUARD", "shield.svg", e -> solicitarPinYAcceder("la VPN WireGuard", "WIREGUARD_VPN", () -> abrirVentanaUnica(VpnWireguard.class, () -> new VpnWireguard(userEmail)))));
         toolsMenu.add(createMenuItem("GENERADOR QR", "security.svg", e -> abrirVentanaUnica(GeneradorQr.class, () -> new GeneradorQr())));
         btnTools.addActionListener(e -> toolsMenu.show(btnTools, 0, btnTools.getHeight()));
         leftGroup.add(btnTools);
