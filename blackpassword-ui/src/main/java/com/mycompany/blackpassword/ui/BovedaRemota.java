@@ -32,6 +32,7 @@ public class BovedaRemota extends JInternalFrame {
         };
         
         tablaSecretos = new JTable(model);
+        tablaSecretos.getTableHeader().setReorderingAllowed(false);
         btnRefrescar = new JButton("Sincronizar con Fortaleza");
         btnRefrescar.addActionListener(e -> refreshData());
 

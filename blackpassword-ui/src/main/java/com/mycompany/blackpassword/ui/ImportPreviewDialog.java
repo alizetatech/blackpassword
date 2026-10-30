@@ -21,6 +21,9 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
+import javax.swing.JMenuItem;
+import javax.swing.JPopupMenu;
+import javax.swing.SwingUtilities;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 
@@ -122,9 +125,25 @@ public class ImportPreviewDialog extends JDialog {
         }
 
         table = new JTable(model);
+        table.getTableHeader().setReorderingAllowed(false);
         table.getColumnModel().getColumn(0).setMaxWidth(80);
         table.getColumnModel().getColumn(3).setPreferredWidth(180);
         table.putClientProperty(FlatClientProperties.STYLE, "rowHeight: 36; showHorizontalLines: true");
+
+        table.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mousePressed(java.awt.event.MouseEvent e) {
+                if (e.isPopupTrigger() || SwingUtilities.isRightMouseButton(e)) {
+                    showImportContextMenu(e);
+                }
+            }
+            @Override
+            public void mouseReleased(java.awt.event.MouseEvent e) {
+                if (e.isPopupTrigger()) {
+                    showImportContextMenu(e);
+                }
+            }
+        });
 
         // Renderizador de color para la columna de Estado
         table.getColumnModel().getColumn(3).setCellRenderer(new DefaultTableCellRenderer() {
@@ -176,6 +195,54 @@ public class ImportPreviewDialog extends JDialog {
 
         pack();
         setLocationRelativeTo(owner);
+    }
+
+    private void showImportContextMenu(java.awt.event.MouseEvent e) {
+        int row = table.rowAtPoint(e.getPoint());
+        int col = table.columnAtPoint(e.getPoint());
+        if (row != -1) {
+            table.setRowSelectionInterval(row, row);
+            String sitio = String.valueOf(model.getValueAt(row, 1));
+            String usuario = String.valueOf(model.getValueAt(row, 2));
+
+            JPopupMenu menu = new JPopupMenu();
+            if (col == 1) {
+                JMenuItem itemSitio = new JMenuItem("📋 Copiar Sitio / Servicio");
+                itemSitio.setFont(itemSitio.getFont().deriveFont(Font.BOLD));
+                itemSitio.addActionListener(ev -> copiarTexto(sitio, "Sitio / Servicio"));
+                menu.add(itemSitio);
+
+                JMenuItem itemUser = new JMenuItem("👤 Copiar Usuario / Identidad");
+                itemUser.addActionListener(ev -> copiarTexto(usuario, "Usuario / Identidad"));
+                menu.add(itemUser);
+            } else if (col == 2) {
+                JMenuItem itemUser = new JMenuItem("👤 Copiar Usuario / Identidad");
+                itemUser.setFont(itemUser.getFont().deriveFont(Font.BOLD));
+                itemUser.addActionListener(ev -> copiarTexto(usuario, "Usuario / Identidad"));
+                menu.add(itemUser);
+
+                JMenuItem itemSitio = new JMenuItem("📋 Copiar Sitio / Servicio");
+                itemSitio.addActionListener(ev -> copiarTexto(sitio, "Sitio / Servicio"));
+                menu.add(itemSitio);
+            } else {
+                JMenuItem itemSitio = new JMenuItem("📋 Copiar Sitio / Servicio");
+                itemSitio.addActionListener(ev -> copiarTexto(sitio, "Sitio / Servicio"));
+                menu.add(itemSitio);
+
+                JMenuItem itemUser = new JMenuItem("👤 Copiar Usuario / Identidad");
+                itemUser.addActionListener(ev -> copiarTexto(usuario, "Usuario / Identidad"));
+                menu.add(itemUser);
+            }
+
+            menu.show(table, e.getX(), e.getY());
+        }
+    }
+
+    private void copiarTexto(String dato, String tipo) {
+        if (dato == null || dato.trim().isEmpty()) return;
+        java.awt.datatransfer.StringSelection sel = new java.awt.datatransfer.StringSelection(dato.trim());
+        java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(sel, sel);
+        com.mycompany.blackpassword.core.util.ToastNotification.show(this, tipo + " copiado", com.mycompany.blackpassword.core.util.ToastNotification.Type.SUCCESS);
     }
 
     private void marcarTodos(boolean estado) {

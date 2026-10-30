@@ -238,12 +238,12 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
         JPanel leftGroup = new JPanel(new FlowLayout(FlowLayout.LEFT, 15, 18));
         leftGroup.setOpaque(false);
         
-        leftGroup.add(createNavButton("BÓVEDA", "vault.svg", e -> solicitarPinYAcceder("la Bóveda", "VAULT", () -> abrirVentanaUnica(Contrasenas.class, () -> new Contrasenas(userEmail)))));
-        leftGroup.add(createNavButton("ARCHIVOS", "files.svg", e -> solicitarPinYAcceder("el Gestor de Archivos", "FILES", () -> abrirVentanaUnica(Archivos.class, () -> new Archivos(userEmail)))));
-        leftGroup.add(createNavButton("IMÁGENES", "images.svg", e -> solicitarPinYAcceder("la Galería de Imágenes", "IMAGES", () -> abrirVentanaUnica(Imagenes.class, () -> new Imagenes(userEmail, this)))));
-        leftGroup.add(createNavButton("WALLET BTC", "key.svg", e -> solicitarPinYAcceder("la Billetera Bitcoin", "BITCOIN_WALLET", () -> abrirVentanaUnica(BilleteraBitcoin.class, () -> new BilleteraBitcoin(userEmail)))));
-        leftGroup.add(createNavButton("WALLET DOGE", "key.svg", e -> solicitarPinYAcceder("la Billetera Dogecoin", "DOGECOIN_WALLET", () -> abrirVentanaUnica(BilleteraDogecoin.class, () -> new BilleteraDogecoin(userEmail)))));
-        leftGroup.add(createNavButton("VPN WIREGUARD", "shield.svg", e -> solicitarPinYAcceder("la VPN WireGuard", "WIREGUARD_VPN", () -> abrirVentanaUnica(VpnWireguard.class, () -> new VpnWireguard(userEmail)))));
+        leftGroup.add(createNavButton("BÓVEDA", "vault.svg", e -> solicitarPinYAcceder(Contrasenas.class, "la Bóveda", "VAULT", () -> abrirVentanaUnica(Contrasenas.class, () -> new Contrasenas(userEmail)))));
+        leftGroup.add(createNavButton("ARCHIVOS", "files.svg", e -> solicitarPinYAcceder(Archivos.class, "el Gestor de Archivos", "FILES", () -> abrirVentanaUnica(Archivos.class, () -> new Archivos(userEmail)))));
+        leftGroup.add(createNavButton("IMÁGENES", "images.svg", e -> solicitarPinYAcceder(Imagenes.class, "la Galería de Imágenes", "IMAGES", () -> abrirVentanaUnica(Imagenes.class, () -> new Imagenes(userEmail, this)))));
+        leftGroup.add(createNavButton("WALLET BTC", "key.svg", e -> solicitarPinYAcceder(BilleteraBitcoin.class, "la Billetera Bitcoin", "BITCOIN_WALLET", () -> abrirVentanaUnica(BilleteraBitcoin.class, () -> new BilleteraBitcoin(userEmail)))));
+        leftGroup.add(createNavButton("WALLET DOGE", "key.svg", e -> solicitarPinYAcceder(BilleteraDogecoin.class, "la Billetera Dogecoin", "DOGECOIN_WALLET", () -> abrirVentanaUnica(BilleteraDogecoin.class, () -> new BilleteraDogecoin(userEmail)))));
+        leftGroup.add(createNavButton("VPN WIREGUARD", "shield.svg", e -> solicitarPinYAcceder(VpnWireguard.class, "la VPN WireGuard", "WIREGUARD_VPN", () -> abrirVentanaUnica(VpnWireguard.class, () -> new VpnWireguard(userEmail)))));
         
         // Botón de Seguridad con Menú Desplegable
         JButton btnSecurity = createNavButton("SEGURIDAD", "security.svg", null);
@@ -261,7 +261,7 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
         // Botón de Herramientas con Menú Desplegable
         JButton btnTools = createNavButton("HERRAMIENTAS", "report.svg", null);
         JPopupMenu toolsMenu = new JPopupMenu();
-        toolsMenu.add(createMenuItem("TÚNEL WIREGUARD", "shield.svg", e -> solicitarPinYAcceder("la VPN WireGuard", "WIREGUARD_VPN", () -> abrirVentanaUnica(VpnWireguard.class, () -> new VpnWireguard(userEmail)))));
+        toolsMenu.add(createMenuItem("TÚNEL WIREGUARD", "shield.svg", e -> solicitarPinYAcceder(VpnWireguard.class, "la VPN WireGuard", "WIREGUARD_VPN", () -> abrirVentanaUnica(VpnWireguard.class, () -> new VpnWireguard(userEmail)))));
         toolsMenu.add(createMenuItem("GENERADOR QR", "security.svg", e -> abrirVentanaUnica(GeneradorQr.class, () -> new GeneradorQr())));
         btnTools.addActionListener(e -> toolsMenu.show(btnTools, 0, btnTools.getHeight()));
         leftGroup.add(btnTools);
@@ -377,8 +377,21 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
         }
     }
 
-    private void solicitarPinYAcceder(String moduloDesc, String logPrefix, Runnable onSuccess) {
+    private void solicitarPinYAcceder(Class<?> claseVentana, String moduloDesc, String logPrefix, Runnable onSuccess) {
         validarIntegridadIdentidad(); 
+
+        JInternalFrame abierta = getVentanaAbierta();
+        if (abierta != null) {
+            if (claseVentana != null && claseVentana.isInstance(abierta)) {
+                restaurarYTraerAlFrente(abierta);
+                ToastNotification.show(this, "El módulo '" + moduloDesc + "' ya se encuentra abierto.", ToastNotification.Type.INFO);
+            } else {
+                String titulo = getTituloVentana(abierta);
+                ToastNotification.show(this, "Debe cerrar la ventana actual ('" + titulo + "') antes de abrir " + moduloDesc + ".", ToastNotification.Type.WARNING);
+                restaurarYTraerAlFrente(abierta);
+            }
+            return;
+        }
 
         JPasswordField pinField = new JPasswordField(4);
         pinField.putClientProperty(FlatClientProperties.STYLE, "showRevealButton: true;");
@@ -400,13 +413,19 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
     }
 
     private void abrirVentanaUnica(Class<?> claseVentana, java.util.function.Supplier<JInternalFrame> creador) {
-        for (JInternalFrame f : internalDesktop.getAllFrames()) {
-            if (claseVentana.isInstance(f)) {
-                try {
-                    f.setSelected(true); f.toFront(); return;
-                } catch (Exception e) {}
+        JInternalFrame abierta = getVentanaAbierta();
+        if (abierta != null) {
+            if (claseVentana != null && claseVentana.isInstance(abierta)) {
+                restaurarYTraerAlFrente(abierta);
+                ToastNotification.show(this, "La ventana ya se encuentra abierta.", ToastNotification.Type.INFO);
+            } else {
+                String titulo = getTituloVentana(abierta);
+                ToastNotification.show(this, "Debe cerrar la ventana actual ('" + titulo + "') antes de abrir otro módulo.", ToastNotification.Type.WARNING);
+                restaurarYTraerAlFrente(abierta);
             }
+            return;
         }
+
         try {
             JInternalFrame nueva = creador.get();
             internalDesktop.add(nueva);
@@ -427,6 +446,35 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
             e.printStackTrace();
             JOptionPane.showMessageDialog(this, "Error al abrir la ventana: " + e.getMessage(), "Error de UI", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    private JInternalFrame getVentanaAbierta() {
+        for (JInternalFrame f : internalDesktop.getAllFrames()) {
+            if (f != null && f.isVisible() && !f.isClosed()) {
+                return f;
+            }
+        }
+        return null;
+    }
+
+    private void restaurarYTraerAlFrente(JInternalFrame f) {
+        if (f == null) return;
+        try {
+            if (f.isIcon()) {
+                f.setIcon(false);
+            }
+            f.toFront();
+            f.setSelected(true);
+        } catch (Exception ignored) {}
+    }
+
+    private String getTituloVentana(JInternalFrame f) {
+        if (f == null) return "Ventana";
+        String t = f.getTitle();
+        if (t != null && !t.trim().isEmpty()) {
+            return t.trim();
+        }
+        return f.getClass().getSimpleName();
     }
 
     private void initComponents() {

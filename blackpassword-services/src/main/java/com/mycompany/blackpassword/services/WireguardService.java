@@ -319,66 +319,171 @@ public class WireguardService {
         return buscarEjecutableWireguard() != null;
     }
 
-    public static synchronized boolean activarTunel(WireguardProfile perfil) {
-        if (perfil == null) return false;
+    public static class TunnelResult {
+        public final boolean success;
+        public final String errorMessage;
+
+        public TunnelResult(boolean success, String errorMessage) {
+            this.success = success;
+            this.errorMessage = errorMessage;
+        }
+    }
+    private static File activeConfigFile = null;
+
+    static {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try {
+                desactivarTunel();
+            } catch (Exception ignored) {}
+        }));
+    }
+
+    public static synchronized TunnelResult activarTunelConDetalle(WireguardProfile perfil) {
+        if (perfil == null) {
+            return new TunnelResult(false, "No se ha seleccionado ningún perfil de WireGuard.");
+        }
+        if (perfil.privateKey == null || perfil.privateKey.trim().isEmpty()) {
+            return new TunnelResult(false, "El perfil no contiene una Clave Privada (PrivateKey) válida.");
+        }
+        if (perfil.endpoint == null || perfil.endpoint.trim().isEmpty()) {
+            return new TunnelResult(false, "El perfil no tiene configurado un Endpoint (servidor:puerto).");
+        }
 
         File wgExe = buscarEjecutableWireguard();
         if (wgExe == null) {
-            System.err.println("[WireguardService] wireguard.exe no encontrado en el sistema.");
-            return false;
+            return new TunnelResult(false, "WireGuard no está instalado en este equipo (no se encontró wireguard.exe).");
         }
 
-        Path tempConf = null;
+        // Si ya había un túnel activo previo, desconectarlo primero
+        if (isServicioTunelActivo()) {
+            desactivarTunel();
+            try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
+        }
+
+        File scriptFile = null;
+        File logFile = null;
         try {
+            File tempDir = new File(System.getProperty("java.io.tmpdir"));
+            scriptFile = new File(tempDir, "bp_wg_install.ps1");
+            logFile = new File(tempDir, "bp_wg_install.log");
+            if (logFile.exists()) logFile.delete();
+
             String confContent = buildConfigString(perfil);
-            tempConf = Files.createTempFile("bp_wg_", ".conf");
-            Files.writeString(tempConf, confContent, StandardCharsets.UTF_8);
+            // Normalizar a saltos de línea Windows CRLF
+            confContent = confContent.replace("\r\n", "\n").replace("\n", "\r\n");
+            String confB64 = Base64.getEncoder().encodeToString(confContent.getBytes(StandardCharsets.UTF_8));
 
-            ProcessBuilder pb = new ProcessBuilder(
-                wgExe.getAbsolutePath(),
-                "/installtunnelservice",
-                tempConf.toAbsolutePath().toString()
+            StringBuilder ps = new StringBuilder();
+            ps.append("$ErrorActionPreference = 'Stop'\r\n");
+            ps.append("try {\r\n");
+            ps.append("  $b64 = '").append(confB64).append("'\r\n");
+            ps.append("  $bytes = [System.Convert]::FromBase64String($b64)\r\n");
+            ps.append("  $targetDir = 'C:\\Program Files\\WireGuard\\Data\\Configurations'\r\n");
+            ps.append("  if (-not (Test-Path $targetDir)) { New-Item -ItemType Directory -Path $targetDir -Force | Out-Null }\r\n");
+            ps.append("  $targetFile = Join-Path $targetDir '").append(TUNNEL_NAME).append(".conf'\r\n");
+            ps.append("  [System.IO.File]::WriteAllBytes($targetFile, $bytes)\r\n");
+            ps.append("  $out = & '").append(wgExe.getAbsolutePath().replace("'", "''")).append("' /installtunnelservice $targetFile 2>&1\r\n");
+            ps.append("  [System.IO.File]::WriteAllText('").append(logFile.getAbsolutePath().replace("\\", "\\\\")).append("', \"SUCCESS: $out\")\r\n");
+            ps.append("} catch {\r\n");
+            ps.append("  [System.IO.File]::WriteAllText('").append(logFile.getAbsolutePath().replace("\\", "\\\\")).append("', \"ERROR: $($_.Exception.Message)\")\r\n");
+            ps.append("}\r\n");
+
+            Files.writeString(scriptFile.toPath(), ps.toString(), StandardCharsets.UTF_8);
+
+            ProcessBuilder pbUac = new ProcessBuilder(
+                "powershell.exe",
+                "-NoProfile",
+                "-WindowStyle", "Hidden",
+                "-Command",
+                "Start-Process powershell.exe -Verb RunAs -Wait -ArgumentList '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \"\"\"" + scriptFile.getAbsolutePath() + "\"\"\"'"
             );
-            pb.redirectErrorStream(true);
-            Process proc = pb.start();
-            int exitCode = proc.waitFor();
+            pbUac.redirectErrorStream(true);
+            Process procUac = pbUac.start();
+            procUac.waitFor();
 
-            if (exitCode == 0 || isServicioTunelActivo()) {
+            // Esperar hasta 6 segundos a que el servicio esté RUNNING
+            for (int i = 0; i < 12; i++) {
+                if (isServicioTunelActivo()) {
+                    tunnelActive = true;
+                    activeProfile = perfil;
+                    connectedTimestamp = System.currentTimeMillis();
+                    System.out.println("[WireguardService] Túnel '" + perfil.name + "' activo y funcionando.");
+                    return new TunnelResult(true, null);
+                }
+                Thread.sleep(500);
+            }
+
+            if (isServicioTunelActivo()) {
                 tunnelActive = true;
                 activeProfile = perfil;
                 connectedTimestamp = System.currentTimeMillis();
-                System.out.println("[WireguardService] Túnel '" + perfil.name + "' activado exitosamente.");
-                return true;
-            } else {
-                System.err.println("[WireguardService] Error levantando túnel, exitCode=" + exitCode);
-                return false;
+                return new TunnelResult(true, null);
             }
+
+            String detailMsg = "Asegúrese de hacer clic en 'Sí' en el aviso de permisos de Administrador de Windows.";
+            if (logFile.exists()) {
+                try {
+                    String logContent = Files.readString(logFile.toPath()).trim();
+                    if (!logContent.isEmpty()) {
+                        detailMsg = logContent;
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            return new TunnelResult(false, "No se pudo iniciar el túnel: " + detailMsg);
         } catch (Exception e) {
             System.err.println("[WireguardService] Excepción al activar túnel: " + e.getMessage());
-            return false;
+            return new TunnelResult(false, "Excepción al activar el túnel: " + e.getMessage());
         } finally {
-            if (tempConf != null) {
-                try { Files.deleteIfExists(tempConf); } catch (Exception ignored) {}
-            }
+            if (scriptFile != null && scriptFile.exists()) scriptFile.delete();
+            if (logFile != null && logFile.exists()) logFile.delete();
         }
+    }
+
+    public static synchronized boolean activarTunel(WireguardProfile perfil) {
+        return activarTunelConDetalle(perfil).success;
     }
 
     public static synchronized boolean desactivarTunel() {
         File wgExe = buscarEjecutableWireguard();
+        File scriptFile = null;
         try {
             if (wgExe != null) {
-                ProcessBuilder pb = new ProcessBuilder(
-                    wgExe.getAbsolutePath(),
-                    "/uninstalltunnelservice",
-                    TUNNEL_NAME
+                File tempDir = new File(System.getProperty("java.io.tmpdir"));
+                scriptFile = new File(tempDir, "bp_wg_uninstall.ps1");
+
+                StringBuilder ps = new StringBuilder();
+                ps.append("& '").append(wgExe.getAbsolutePath().replace("'", "''")).append("' /uninstalltunnelservice ").append(TUNNEL_NAME).append("\r\n");
+                ps.append("$dpapi = 'C:\\Program Files\\WireGuard\\Data\\Configurations\\").append(TUNNEL_NAME).append(".conf.dpapi'\r\n");
+                ps.append("if (Test-Path $dpapi) {\r\n");
+                ps.append("  $len = (Get-Item $dpapi).Length\r\n");
+                ps.append("  [System.IO.File]::WriteAllBytes($dpapi, (New-Object byte[] $len))\r\n");
+                ps.append("  Remove-Item $dpapi -Force -ErrorAction SilentlyContinue\r\n");
+                ps.append("}\r\n");
+                ps.append("$conf = 'C:\\Program Files\\WireGuard\\Data\\Configurations\\").append(TUNNEL_NAME).append(".conf'\r\n");
+                ps.append("if (Test-Path $conf) {\r\n");
+                ps.append("  $len = (Get-Item $conf).Length\r\n");
+                ps.append("  [System.IO.File]::WriteAllBytes($conf, (New-Object byte[] $len))\r\n");
+                ps.append("  Remove-Item $conf -Force -ErrorAction SilentlyContinue\r\n");
+                ps.append("}\r\n");
+
+                Files.writeString(scriptFile.toPath(), ps.toString(), StandardCharsets.UTF_8);
+
+                ProcessBuilder pbUac = new ProcessBuilder(
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-WindowStyle", "Hidden",
+                    "-Command",
+                    "Start-Process powershell.exe -Verb RunAs -Wait -ArgumentList '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \"\"\"" + scriptFile.getAbsolutePath() + "\"\"\"'"
                 );
-                pb.redirectErrorStream(true);
-                Process proc = pb.start();
-                proc.waitFor();
+                pbUac.redirectErrorStream(true);
+                Process procUac = pbUac.start();
+                procUac.waitFor();
             }
         } catch (Exception e) {
             System.err.println("[WireguardService] Error desinstalando servicio: " + e.getMessage());
         } finally {
+            if (scriptFile != null && scriptFile.exists()) scriptFile.delete();
             tunnelActive = false;
             activeProfile = null;
             connectedTimestamp = 0;
@@ -387,19 +492,25 @@ public class WireguardService {
     }
 
     public static boolean isServicioTunelActivo() {
-        try {
-            ProcessBuilder pb = new ProcessBuilder("sc", "query", "WireGuardTunnel$" + TUNNEL_NAME);
-            pb.redirectErrorStream(true);
-            Process proc = pb.start();
-            try (BufferedReader r = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
-                String line;
-                while ((line = r.readLine()) != null) {
-                    if (line.contains("RUNNING")) {
-                        return true;
+        String[] posiblesNombres = {
+            "WireGuardTunnel$" + TUNNEL_NAME,
+            "WireGuard Tunnel: " + TUNNEL_NAME
+        };
+        for (String nombre : posiblesNombres) {
+            try {
+                ProcessBuilder pb = new ProcessBuilder("sc.exe", "query", nombre);
+                pb.redirectErrorStream(true);
+                Process proc = pb.start();
+                try (BufferedReader r = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
+                    String line;
+                    while ((line = r.readLine()) != null) {
+                        if (line.contains("RUNNING")) {
+                            return true;
+                        }
                     }
                 }
-            }
-        } catch (Exception ignored) {}
+            } catch (Exception ignored) {}
+        }
         return false;
     }
 

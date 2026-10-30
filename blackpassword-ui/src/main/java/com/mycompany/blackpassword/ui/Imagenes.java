@@ -89,6 +89,7 @@ public class Imagenes extends javax.swing.JInternalFrame {
                 + "showVerticalLines: false");
         
         table.getTableHeader().putClientProperty(FlatClientProperties.STYLE, "font: bold; background: #F8F9FA; separatorColor: #E0E0E0");
+        table.getTableHeader().setReorderingAllowed(false);
 
         String fieldStyle = "arc: 12; margin: 6,12,6,12; background: #FFFFFF; borderWidth: 1; focusColor: #0078D4";
         txtNombre.putClientProperty(FlatClientProperties.STYLE, fieldStyle);
@@ -257,6 +258,7 @@ public class Imagenes extends javax.swing.JInternalFrame {
             @Override public boolean isCellEditable(int r, int c) { return false; }
         };
         table = new JTable(model);
+        table.getTableHeader().setReorderingAllowed(false);
         JScrollPane scroll = new JScrollPane(table);
         scroll.setBorder(BorderFactory.createLineBorder(new Color(230, 230, 230)));
         panelCenter.add(scroll, BorderLayout.CENTER);
@@ -384,8 +386,27 @@ public class Imagenes extends javax.swing.JInternalFrame {
     }
 
     private void editarMetadata() {
+        validarIntegridad();
         int fila = table.getSelectedRow();
         if (fila == -1) return;
+
+        JPasswordField pfPin = new JPasswordField(4);
+        pfPin.putClientProperty(FlatClientProperties.STYLE, "showRevealButton: true;");
+        if (JOptionPane.showConfirmDialog(this, new Object[]{"Para editar metadatos de la imagen, ingrese su PIN de seguridad:", pfPin}, "Verificación de Seguridad", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        char[] pin = pfPin.getPassword();
+        boolean validPin = SecuritySession.verifyUserPin(pin);
+        java.util.Arrays.fill(pin, '0');
+
+        if (!validPin) {
+            com.mycompany.blackpassword.services.IntrusionService.reportFailure(userEmail, "IMAGES_PIN_EDIT");
+            JOptionPane.showMessageDialog(this, "PIN incorrecto. Edición cancelada.", "Error de Seguridad", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        com.mycompany.blackpassword.services.IntrusionService.reportSuccess(userEmail);
+
         try {
             String docId = model.getValueAt(table.convertRowIndexToModel(fila), 2).toString();
             Firestore db = FirebaseService.getFirestore();
@@ -451,18 +472,53 @@ public class Imagenes extends javax.swing.JInternalFrame {
     }
 
     private void eliminarImagen() {
+        validarIntegridad();
         int fila = table.getSelectedRow();
-        if (fila == -1 || JOptionPane.showConfirmDialog(this, "¿Borrar imagen?") != JOptionPane.YES_OPTION) return;
+        if (fila == -1) return;
+
+        int modelRow = table.convertRowIndexToModel(fila);
+        String nombreImg = String.valueOf(model.getValueAt(modelRow, 0));
+
+        if (JOptionPane.showConfirmDialog(this, "¿Eliminar permanentemente la imagen '" + nombreImg + "' de la nube?", "CONFIRMAR ELIMINACIÓN", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) {
+            return;
+        }
+
+        JPasswordField pfPin = new JPasswordField(4);
+        pfPin.putClientProperty(FlatClientProperties.STYLE, "showRevealButton: true;");
+        if (JOptionPane.showConfirmDialog(this, new Object[]{"Para autorizar la eliminación de '" + nombreImg + "', ingrese su PIN de seguridad:", pfPin}, "Verificación de Seguridad", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        char[] pin = pfPin.getPassword();
+        boolean validPin = SecuritySession.verifyUserPin(pin);
+        java.util.Arrays.fill(pin, '0');
+
+        if (!validPin) {
+            com.mycompany.blackpassword.services.IntrusionService.reportFailure(userEmail, "IMAGES_PIN_DELETE");
+            JOptionPane.showMessageDialog(this, "PIN incorrecto. Eliminación cancelada.", "Error de Seguridad", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        com.mycompany.blackpassword.services.IntrusionService.reportSuccess(userEmail);
+
         new Thread(() -> {
             try {
-                String docId = model.getValueAt(table.convertRowIndexToModel(fila), 2).toString();
+                String docId = model.getValueAt(modelRow, 2).toString();
                 String sp = getStoragePath(docId);
                 FirebaseService.getStorageBucket().get(sp).delete();
                 String coll = getHashedUserPath();
                 var deleteFuture = FirebaseService.getFirestore().collection(Objects.requireNonNull(coll)).document(Objects.requireNonNull(docId)).delete();
                 deleteFuture.get();
-                java.awt.EventQueue.invokeLater(() -> { cargarImagenesDesdeFirebase(); resetForm(); });
-            } catch (Exception e) {}
+                AuditService.log(userEmail, "IMAGE_DELETE", "Imagen eliminada: " + nombreImg);
+                java.awt.EventQueue.invokeLater(() -> {
+                    ToastNotification.show(this, "Imagen eliminada correctamente.", ToastNotification.Type.SUCCESS);
+                    cargarImagenesDesdeFirebase();
+                    resetForm();
+                });
+            } catch (Exception e) {
+                java.awt.EventQueue.invokeLater(() -> {
+                    ToastNotification.show(this, "Error al eliminar la imagen.", ToastNotification.Type.ERROR);
+                });
+            }
         }).start();
     }
 

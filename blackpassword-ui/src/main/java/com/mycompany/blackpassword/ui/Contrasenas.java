@@ -38,6 +38,9 @@ import java.util.Set;
 import javax.swing.BorderFactory;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
+import javax.swing.JCheckBoxMenuItem;
+import javax.swing.JMenuItem;
+import javax.swing.JPopupMenu;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
@@ -79,10 +82,15 @@ public class Contrasenas extends javax.swing.JInternalFrame {
     private JButton btnVolver;
     private JButton btnGenPass;
     private JButton btnCopyUser;
+    private JButton btnCopyService;
+    private int lastSelectedColumn = 0;
     private JButton btnExportData;
     private JButton btnImportData;
     private JButton btnTogglePrivacy;
+    private JButton btnPrivacyOptions;
     private boolean privacyModeActive = false;
+    private boolean hideServices = true;
+    private boolean hideUsers = true;
     private static final Preferences prefs = Preferences.userNodeForPackage(Contrasenas.class);
     
     private JLabel jLabelTitulo;
@@ -92,6 +100,8 @@ public class Contrasenas extends javax.swing.JInternalFrame {
         super("Bóveda de Seguridad", false, false, false, false);
         this.userEmail = email;
         this.privacyModeActive = prefs.getBoolean("privacy_mode_" + userEmail, false);
+        this.hideServices = prefs.getBoolean("privacy_hide_services_" + userEmail, true);
+        this.hideUsers = prefs.getBoolean("privacy_hide_users_" + userEmail, true);
         validarIntegridad();
         
         try {
@@ -134,6 +144,7 @@ public class Contrasenas extends javax.swing.JInternalFrame {
                 + "showVerticalLines: false");
         
         table.getTableHeader().putClientProperty(FlatClientProperties.STYLE, "font: bold; background: #F8F9FA; separatorColor: #E0E0E0");
+        table.getTableHeader().setReorderingAllowed(false);
         
         String fieldStyle = "arc: 12; margin: 6,12,6,12; background: #FFFFFF; borderWidth: 1; focusColor: #0078D4";
         txtService.putClientProperty(FlatClientProperties.STYLE, fieldStyle);
@@ -155,6 +166,9 @@ public class Contrasenas extends javax.swing.JInternalFrame {
         btnRefresh.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #0078D4; foreground: #FFFFFF; font: bold 12; margin: 0,15,0,15");
         btnGenPass.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #F3F3F3; foreground: #0078D4; font: bold");
         btnCopyUser.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #F3F3F3; foreground: #666666");
+        if (btnCopyService != null) {
+            btnCopyService.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #F3F3F3; foreground: #666666");
+        }
 
         btnVolver.putClientProperty(FlatClientProperties.STYLE, "buttonType: toolBarButton; arc: 12; foreground: #0078D4; font: bold 11; background: #F3F9FF");
 
@@ -168,6 +182,9 @@ public class Contrasenas extends javax.swing.JInternalFrame {
             btnRefresh.setIcon(new FlatSVGIcon("img/files.svg", 18, 18));
             btnVolver.setIcon(new FlatSVGIcon("img/vault.svg", 18, 18));
             btnCopyUser.setIcon(new FlatSVGIcon("img/files.svg", 16, 16));
+            if (btnCopyService != null) {
+                btnCopyService.setIcon(new FlatSVGIcon("img/files.svg", 16, 16));
+            }
             btnExportData.setIcon(new FlatSVGIcon("img/report.svg", 18, 18));
             btnImportData.setIcon(new FlatSVGIcon("img/unlock.svg", 18, 18));
         } catch (Exception e) {}
@@ -199,9 +216,44 @@ public class Contrasenas extends javax.swing.JInternalFrame {
 
         table.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
+            public void mousePressed(java.awt.event.MouseEvent e) {
+                int c = table.columnAtPoint(e.getPoint());
+                if (c != -1) lastSelectedColumn = c;
+                if (e.isPopupTrigger() || SwingUtilities.isRightMouseButton(e)) {
+                    showTableContextMenu(e);
+                }
+            }
+            @Override
+            public void mouseReleased(java.awt.event.MouseEvent e) {
+                int c = table.columnAtPoint(e.getPoint());
+                if (c != -1) lastSelectedColumn = c;
+                if (e.isPopupTrigger()) {
+                    showTableContextMenu(e);
+                }
+            }
+            @Override
             public void mouseClicked(java.awt.event.MouseEvent e) {
+                int c = table.columnAtPoint(e.getPoint());
+                if (c != -1) lastSelectedColumn = c;
                 if (e.getClickCount() == 2 && table.getSelectedRow() != -1) {
                     editSecret();
+                }
+            }
+        });
+
+        table.addKeyListener(new KeyAdapter() {
+            @Override
+            public void keyPressed(KeyEvent e) {
+                if (e.isControlDown() && e.getKeyCode() == KeyEvent.VK_C) {
+                    int row = table.getSelectedRow();
+                    if (row != -1) {
+                        int modelRow = table.convertRowIndexToModel(row);
+                        if (lastSelectedColumn == 1) {
+                            copiarDatoAlPortapapeles(String.valueOf(model.getValueAt(modelRow, 1)), "Usuario / Identidad");
+                        } else {
+                            copiarDatoAlPortapapeles(String.valueOf(model.getValueAt(modelRow, 0)), "Sitio / Servicio");
+                        }
+                    }
                 }
             }
         });
@@ -271,8 +323,26 @@ public class Contrasenas extends javax.swing.JInternalFrame {
         txtUsername = new JTextField(); txtUsername.setPreferredSize(new Dimension(100, 40));
         txtPassword = new JPasswordField(); txtPassword.setPreferredSize(new Dimension(100, 40));
         
-        addLabeledField(panelContentSide, "Sitio / Servicio:", txtService, gbc, row++);
-        row++;
+        gbc.insets = new Insets(5, 0, 2, 0); gbc.gridy = row++;
+        JLabel ls = new JLabel("Sitio / Servicio:"); ls.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        panelContentSide.add(ls, gbc);
+
+        JPanel servicePanel = new JPanel(new BorderLayout(5, 0));
+        servicePanel.setOpaque(false);
+        servicePanel.add(txtService, BorderLayout.CENTER);
+        btnCopyService = new JButton();
+        btnCopyService.setToolTipText("Copiar sitio / servicio");
+        btnCopyService.setPreferredSize(new Dimension(40, 40));
+        btnCopyService.putClientProperty(FlatClientProperties.STYLE, "arc: 10; background: #F3F3F3; foreground: #666666");
+        try {
+            btnCopyService.setIcon(new FlatSVGIcon("img/files.svg", 16, 16));
+        } catch (Exception ex) {}
+        btnCopyService.addActionListener(e -> {
+            copiarDatoAlPortapapeles(txtService.getText(), "Sitio / Servicio");
+        });
+        servicePanel.add(btnCopyService, BorderLayout.EAST);
+        gbc.insets = new Insets(0, 0, 15, 0); gbc.gridy = row++;
+        panelContentSide.add(servicePanel, gbc);
 
         // Usuario con botón de copiado rápido
         gbc.insets = new Insets(5, 0, 2, 0); gbc.gridy = row++;
@@ -370,24 +440,49 @@ public class Contrasenas extends javax.swing.JInternalFrame {
         panelSearch.add(txtSearch, BorderLayout.CENTER);
 
         btnTogglePrivacy = new JButton();
-        btnTogglePrivacy.setPreferredSize(new Dimension(210, 42));
-        btnTogglePrivacy.addActionListener(e -> {
-            privacyModeActive = !privacyModeActive;
-            prefs.putBoolean("privacy_mode_" + userEmail, privacyModeActive);
-            updatePrivacyButton();
-            table.repaint();
-            ToastNotification.show(this, 
-                privacyModeActive ? "Modo Privacidad activado (Identidades ocultas)" : "Modo Privacidad desactivado (Identidades visibles)", 
-                ToastNotification.Type.INFO);
-        });
+        btnTogglePrivacy.setPreferredSize(new Dimension(230, 42));
+        btnTogglePrivacy.addActionListener(e -> togglePrivacyMode());
+
+        btnPrivacyOptions = new JButton("▾");
+        btnPrivacyOptions.setPreferredSize(new Dimension(38, 42));
+        btnPrivacyOptions.setToolTipText("Configurar qué elementos ocultar en Modo Privado");
+        btnPrivacyOptions.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #F3F3F3; foreground: #444444; hoverBackground: #E5E5E5; font: bold 14");
+        btnPrivacyOptions.addActionListener(e -> showPrivacyPopupMenu(btnPrivacyOptions));
+
+        JPanel panelPrivacyContainer = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        panelPrivacyContainer.setOpaque(false);
+        panelPrivacyContainer.add(btnTogglePrivacy);
+        panelPrivacyContainer.add(btnPrivacyOptions);
+
         updatePrivacyButton();
-        panelSearch.add(btnTogglePrivacy, BorderLayout.EAST);
+        btnTogglePrivacy.setComponentPopupMenu(createPrivacyPopupMenu());
+
+        panelSearch.add(panelPrivacyContainer, BorderLayout.EAST);
         panelCenter.add(panelSearch, BorderLayout.NORTH);
 
         model = new DefaultTableModel(new Object[]{"SITIO / SERVICIO", "USUARIO / IDENTIDAD", "ÚLTIMA ACTUALIZACIÓN"}, 0) {
             @Override public boolean isCellEditable(int r, int c) { return false; }
         };
         table = new JTable(model);
+        table.getTableHeader().setReorderingAllowed(false);
+
+        // Renderizador con máscara para Modo Privacidad (Censura de Sitio / Servicio)
+        table.getColumnModel().getColumn(0).setCellRenderer(new DefaultTableCellRenderer() {
+            @Override
+            public Component getTableCellRendererComponent(JTable table, Object value,
+                    boolean isSelected, boolean hasFocus, int row, int column) {
+                JLabel c = (JLabel) super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+                if (privacyModeActive && hideServices && value != null && !value.toString().trim().isEmpty() && !value.toString().equals("N/A") && !value.toString().startsWith("⚠️")) {
+                    int len = Math.min(Math.max(value.toString().length(), 8), 18);
+                    c.setText("•".repeat(len));
+                    c.setToolTipText("Sitio / Servicio protegido por Modo Privado");
+                } else {
+                    c.setText(value != null ? value.toString() : "");
+                    c.setToolTipText(value != null ? value.toString() : null);
+                }
+                return c;
+            }
+        });
 
         // Renderizador con máscara para Modo Privacidad (Censura de Usuario como contraseña para grabaciones)
         table.getColumnModel().getColumn(1).setCellRenderer(new DefaultTableCellRenderer() {
@@ -395,10 +490,10 @@ public class Contrasenas extends javax.swing.JInternalFrame {
             public Component getTableCellRendererComponent(JTable table, Object value,
                     boolean isSelected, boolean hasFocus, int row, int column) {
                 JLabel c = (JLabel) super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
-                if (privacyModeActive && value != null && !value.toString().trim().isEmpty() && !value.toString().equals("N/A") && !value.toString().startsWith("⚠️")) {
-                    int len = Math.min(Math.max(value.toString().length(), 8), 16);
+                if (privacyModeActive && hideUsers && value != null && !value.toString().trim().isEmpty() && !value.toString().equals("N/A") && !value.toString().startsWith("⚠️")) {
+                    int len = Math.min(Math.max(value.toString().length(), 8), 18);
                     c.setText("•".repeat(len));
-                    c.setToolTipText("Identidad protegida por Modo Privacidad");
+                    c.setToolTipText("Identidad protegida por Modo Privado");
                 } else {
                     c.setText(value != null ? value.toString() : "");
                     c.setToolTipText(value != null ? value.toString() : null);
@@ -414,18 +509,101 @@ public class Contrasenas extends javax.swing.JInternalFrame {
         getContentPane().add(panelCenter, BorderLayout.CENTER);
     }
 
+    private void togglePrivacyMode() {
+        privacyModeActive = !privacyModeActive;
+        prefs.putBoolean("privacy_mode_" + userEmail, privacyModeActive);
+        updatePrivacyButton();
+        table.repaint();
+
+        String statusMsg;
+        if (privacyModeActive) {
+            if (hideServices && hideUsers) {
+                statusMsg = "Modo Privado activado (Sitios y Usuarios ocultos)";
+            } else if (hideServices) {
+                statusMsg = "Modo Privado activado (Sitios ocultos)";
+            } else {
+                statusMsg = "Modo Privado activado (Usuarios ocultos)";
+            }
+        } else {
+            statusMsg = "Modo Privado desactivado (Datos visibles)";
+        }
+        ToastNotification.show(this, statusMsg, ToastNotification.Type.INFO);
+    }
+
+    private JPopupMenu createPrivacyPopupMenu() {
+        JPopupMenu menu = new JPopupMenu();
+
+        JLabel lblHeader = new JLabel("  ELEMENTOS EN MODO PRIVADO:");
+        lblHeader.setFont(new Font("Segoe UI", Font.BOLD, 11));
+        lblHeader.setForeground(new Color(100, 100, 100));
+        menu.add(lblHeader);
+        menu.addSeparator();
+
+        JCheckBoxMenuItem itemServices = new JCheckBoxMenuItem("Ocultar Sitio / Servicio", hideServices);
+        itemServices.addActionListener(e -> {
+            hideServices = itemServices.isSelected();
+            if (!hideServices && !hideUsers) {
+                hideServices = true;
+                itemServices.setSelected(true);
+            }
+            prefs.putBoolean("privacy_hide_services_" + userEmail, hideServices);
+            updatePrivacyButton();
+            table.repaint();
+            ToastNotification.show(this, hideServices ? "Censura de Sitios activada" : "Censura de Sitios desactivada", ToastNotification.Type.INFO);
+        });
+
+        JCheckBoxMenuItem itemUsers = new JCheckBoxMenuItem("Ocultar Usuario / Identidad", hideUsers);
+        itemUsers.addActionListener(e -> {
+            hideUsers = itemUsers.isSelected();
+            if (!hideServices && !hideUsers) {
+                hideUsers = true;
+                itemUsers.setSelected(true);
+            }
+            prefs.putBoolean("privacy_hide_users_" + userEmail, hideUsers);
+            updatePrivacyButton();
+            table.repaint();
+            ToastNotification.show(this, hideUsers ? "Censura de Usuarios activada" : "Censura de Usuarios desactivada", ToastNotification.Type.INFO);
+        });
+
+        menu.add(itemServices);
+        menu.add(itemUsers);
+        menu.addSeparator();
+
+        JMenuItem itemToggle = new JMenuItem(privacyModeActive ? "Desactivar Modo Privado (Mostrar Todo)" : "Activar Modo Privado (Ocultar Seleccionados)");
+        try {
+            itemToggle.setIcon(new FlatSVGIcon(privacyModeActive ? "img/unlock.svg" : "img/shield.svg", 16, 16));
+        } catch (Exception ignored) {}
+        itemToggle.addActionListener(e -> togglePrivacyMode());
+        menu.add(itemToggle);
+
+        return menu;
+    }
+
+    private void showPrivacyPopupMenu(Component invoker) {
+        JPopupMenu menu = createPrivacyPopupMenu();
+        menu.show(invoker, 0, invoker.getHeight());
+    }
+
     private void updatePrivacyButton() {
         if (privacyModeActive) {
-            btnTogglePrivacy.setText("USUARIOS: OCULTOS");
-            btnTogglePrivacy.setToolTipText("Modo Privacidad Activo: Los usuarios/emails se muestran censurados como contraseñas para grabaciones. Clic para mostrar.");
+            if (hideServices && hideUsers) {
+                btnTogglePrivacy.setText("MODO PRIVADO: TODO OCULTO");
+                btnTogglePrivacy.setToolTipText("Modo Privado Activo: Sitios y Usuarios censurados para máxima confidencialidad. Clic para mostrar, clic derecho para opciones.");
+            } else if (hideServices) {
+                btnTogglePrivacy.setText("SITIOS: OCULTOS");
+                btnTogglePrivacy.setToolTipText("Modo Privado Activo: Sitios / Servicios censurados. Clic para mostrar, clic derecho para opciones.");
+            } else {
+                btnTogglePrivacy.setText("USUARIOS: OCULTOS");
+                btnTogglePrivacy.setToolTipText("Modo Privado Activo: Usuarios / Identidades censurados. Clic para mostrar, clic derecho para opciones.");
+            }
             btnTogglePrivacy.putClientProperty(FlatClientProperties.STYLE, 
                 "arc: 14; background: #107C10; foreground: #FFFFFF; hoverBackground: #0E680E; font: bold 12");
             try {
                 btnTogglePrivacy.setIcon(new FlatSVGIcon("img/shield.svg", 18, 18));
             } catch (Exception ignored) {}
         } else {
-            btnTogglePrivacy.setText("USUARIOS: VISIBLES");
-            btnTogglePrivacy.setToolTipText("Modo Privacidad Inactivo: Clic para ocultar los usuarios/emails en pantalla.");
+            btnTogglePrivacy.setText("MODO PRIVADO: INACTIVO");
+            btnTogglePrivacy.setToolTipText("Modo Privado Inactivo: Todos los datos visibles. Clic para activar, clic derecho para opciones.");
             btnTogglePrivacy.putClientProperty(FlatClientProperties.STYLE, 
                 "arc: 14; background: #F3F3F3; foreground: #333333; hoverBackground: #E5E5E5; font: bold 12");
             try {
@@ -591,13 +769,131 @@ public class Contrasenas extends javax.swing.JInternalFrame {
                     String pass = decryptPasswordFromRow(row);
                     JPasswordField pfPass = new JPasswordField(pass); pfPass.setEditable(false);
                     pfPass.putClientProperty(FlatClientProperties.STYLE, "showRevealButton: true");
-                    JOptionPane.showMessageDialog(this, pfPass, "CONTRASEÑA: " + model.getValueAt(row, 0), JOptionPane.INFORMATION_MESSAGE);
+                    JOptionPane.showMessageDialog(this, pfPass, "CONTRASEÑA: " + ((privacyModeActive && hideServices) ? "••••••••" : model.getValueAt(table.convertRowIndexToModel(row), 0)), JOptionPane.INFORMATION_MESSAGE);
                     AuditService.log(userEmail, "VAULT_VIEW", "Acceso a: " + model.getValueAt(row, 0));
                 } catch (Exception e) { ToastNotification.show(this, "Error al descifrar", ToastNotification.Type.ERROR); }
             } else {
                 IntrusionService.reportFailure(userEmail, "VAULT_PIN_VIEW");
                 JOptionPane.showMessageDialog(this, "PIN incorrecto.", "Error", JOptionPane.ERROR_MESSAGE);
             }
+        }
+    }
+
+    private void copiarDatoAlPortapapeles(String dato, String tipo) {
+        if (dato == null || dato.trim().isEmpty() || "N/A".equalsIgnoreCase(dato.trim())) {
+            ToastNotification.show(this, "No hay " + tipo + " para copiar.", ToastNotification.Type.WARNING);
+            return;
+        }
+        StringSelection selection = new StringSelection(dato.trim());
+        Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, selection);
+        ToastNotification.show(this, tipo + " copiado al portapapeles", ToastNotification.Type.SUCCESS);
+    }
+
+    private void showTableContextMenu(java.awt.event.MouseEvent e) {
+        int row = table.rowAtPoint(e.getPoint());
+        int col = table.columnAtPoint(e.getPoint());
+        
+        if (row != -1) {
+            table.setRowSelectionInterval(row, row);
+            if (col != -1) {
+                lastSelectedColumn = col;
+            } else {
+                col = lastSelectedColumn;
+            }
+            
+            int modelRow = table.convertRowIndexToModel(row);
+            String rawService = String.valueOf(model.getValueAt(modelRow, 0));
+            String rawUsername = String.valueOf(model.getValueAt(modelRow, 1));
+            
+            JPopupMenu menu = new JPopupMenu();
+            
+            String colName = (col == 0) ? "SITIO / SERVICIO" : (col == 1 ? "USUARIO / IDENTIDAD" : "REGISTRO");
+            JMenuItem lblHeader = new JMenuItem("FILA: " + (row + 1) + " | " + colName);
+            lblHeader.setEnabled(false);
+            lblHeader.setFont(lblHeader.getFont().deriveFont(Font.BOLD, 11f));
+            menu.add(lblHeader);
+            menu.addSeparator();
+
+            if (col == 0) {
+                // Clic prioritario en Sitio / Servicio
+                JMenuItem itemCopiarSitio = new JMenuItem("📋 Copiar Sitio / Servicio");
+                itemCopiarSitio.setFont(itemCopiarSitio.getFont().deriveFont(Font.BOLD));
+                itemCopiarSitio.addActionListener(ev -> copiarDatoAlPortapapeles(rawService, "Sitio / Servicio"));
+                menu.add(itemCopiarSitio);
+
+                JMenuItem itemCopiarUsuario = new JMenuItem("👤 Copiar Usuario / Identidad");
+                itemCopiarUsuario.addActionListener(ev -> copiarDatoAlPortapapeles(rawUsername, "Usuario / Identidad"));
+                menu.add(itemCopiarUsuario);
+            } else if (col == 1) {
+                // Clic prioritario en Usuario / Identidad
+                JMenuItem itemCopiarUsuario = new JMenuItem("👤 Copiar Usuario / Identidad");
+                itemCopiarUsuario.setFont(itemCopiarUsuario.getFont().deriveFont(Font.BOLD));
+                itemCopiarUsuario.addActionListener(ev -> copiarDatoAlPortapapeles(rawUsername, "Usuario / Identidad"));
+                menu.add(itemCopiarUsuario);
+
+                JMenuItem itemCopiarSitio = new JMenuItem("📋 Copiar Sitio / Servicio");
+                itemCopiarSitio.addActionListener(ev -> copiarDatoAlPortapapeles(rawService, "Sitio / Servicio"));
+                menu.add(itemCopiarSitio);
+            } else {
+                JMenuItem itemCopiarSitio = new JMenuItem("📋 Copiar Sitio / Servicio");
+                itemCopiarSitio.addActionListener(ev -> copiarDatoAlPortapapeles(rawService, "Sitio / Servicio"));
+                menu.add(itemCopiarSitio);
+
+                JMenuItem itemCopiarUsuario = new JMenuItem("👤 Copiar Usuario / Identidad");
+                itemCopiarUsuario.addActionListener(ev -> copiarDatoAlPortapapeles(rawUsername, "Usuario / Identidad"));
+                menu.add(itemCopiarUsuario);
+            }
+
+            JMenuItem itemCopiarPass = new JMenuItem("🔑 Copiar Contraseña (requiere PIN)");
+            itemCopiarPass.addActionListener(ev -> copySecret());
+            menu.add(itemCopiarPass);
+
+            menu.addSeparator();
+
+            JMenuItem itemView = new JMenuItem("👁️ Ver Contraseña");
+            itemView.addActionListener(ev -> viewSecret());
+            menu.add(itemView);
+
+            JMenuItem itemEdit = new JMenuItem("✏️ Editar Credencial");
+            itemEdit.addActionListener(ev -> editSecret());
+            menu.add(itemEdit);
+
+            JMenuItem itemDelete = new JMenuItem("🗑️ Eliminar Credencial");
+            itemDelete.addActionListener(ev -> deleteSecret());
+            menu.add(itemDelete);
+
+            menu.addSeparator();
+
+            // Submenú de Privacidad
+            javax.swing.JMenu privacySubMenu = new javax.swing.JMenu("🛡️ Modo Privado");
+            JCheckBoxMenuItem menuHideSites = new JCheckBoxMenuItem("Ocultar Sitios / Servicios", hideServices);
+            menuHideSites.addActionListener(ev -> {
+                hideServices = menuHideSites.isSelected();
+                prefs.putBoolean("privacy_hide_services_" + userEmail, hideServices);
+                updatePrivacyButton();
+                table.repaint();
+            });
+            privacySubMenu.add(menuHideSites);
+
+            JCheckBoxMenuItem menuHideUsers = new JCheckBoxMenuItem("Ocultar Usuarios / Identidades", hideUsers);
+            menuHideUsers.addActionListener(ev -> {
+                hideUsers = menuHideUsers.isSelected();
+                prefs.putBoolean("privacy_hide_users_" + userEmail, hideUsers);
+                updatePrivacyButton();
+                table.repaint();
+            });
+            privacySubMenu.add(menuHideUsers);
+
+            privacySubMenu.addSeparator();
+            JMenuItem menuTogglePriv = new JMenuItem(privacyModeActive ? "Desactivar Modo Privado" : "Activar Modo Privado");
+            menuTogglePriv.addActionListener(ev -> togglePrivacyMode());
+            privacySubMenu.add(menuTogglePriv);
+
+            menu.add(privacySubMenu);
+
+            menu.show(table, e.getX(), e.getY());
+        } else {
+            createPrivacyPopupMenu().show(table, e.getX(), e.getY());
         }
     }
 
@@ -646,13 +942,18 @@ public class Contrasenas extends javax.swing.JInternalFrame {
         if (row == -1) return;
 
         JPasswordField pfPin = new JPasswordField(4);
-        if (JOptionPane.showConfirmDialog(this, new Object[]{"PIN de seguridad:", pfPin}, "Verificación", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) {
+        pfPin.putClientProperty(FlatClientProperties.STYLE, "showRevealButton: true;");
+        if (JOptionPane.showConfirmDialog(this, new Object[]{"Para editar esta credencial, ingrese su PIN de seguridad:", pfPin}, "Verificación de Seguridad", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) {
             return;
         }
 
-        if (!SecuritySession.verifyUserPin(pfPin.getPassword())) {
+        char[] pin = pfPin.getPassword();
+        boolean validPin = SecuritySession.verifyUserPin(pin);
+        java.util.Arrays.fill(pin, '0');
+
+        if (!validPin) {
             IntrusionService.reportFailure(userEmail, "VAULT_PIN_EDIT");
-            JOptionPane.showMessageDialog(this, "PIN incorrecto.", "Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "PIN incorrecto. Edición cancelada.", "Error de Seguridad", JOptionPane.ERROR_MESSAGE);
             return;
         }
         IntrusionService.reportSuccess(userEmail);
@@ -862,8 +1163,26 @@ public class Contrasenas extends javax.swing.JInternalFrame {
         String serviceId = (String) data.get("service");
         String firestoreDocId = (String) data.get("id");
         
-        if (JOptionPane.showConfirmDialog(this, "¿Eliminar permanentemente " + serviceId + "?", "CONFIRMAR", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
-        
+        String serviceDisplay = (privacyModeActive && hideServices) ? "esta credencial" : serviceId;
+        if (JOptionPane.showConfirmDialog(this, "¿Eliminar permanentemente " + serviceDisplay + "?", "CONFIRMAR ELIMINACIÓN", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
+
+        JPasswordField pfPin = new JPasswordField(4);
+        pfPin.putClientProperty(FlatClientProperties.STYLE, "showRevealButton: true;");
+        if (JOptionPane.showConfirmDialog(this, new Object[]{"Para autorizar la eliminación de " + serviceDisplay + ", ingrese su PIN de seguridad:", pfPin}, "Verificación de Seguridad", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        char[] pin = pfPin.getPassword();
+        boolean validPin = SecuritySession.verifyUserPin(pin);
+        java.util.Arrays.fill(pin, '0');
+
+        if (!validPin) {
+            IntrusionService.reportFailure(userEmail, "VAULT_PIN_DELETE");
+            JOptionPane.showMessageDialog(this, "PIN incorrecto. Eliminación cancelada.", "Error de Seguridad", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        IntrusionService.reportSuccess(userEmail);
+
         VaultManager.deleteSecret(userEmail, serviceId, firestoreDocId);
         ToastNotification.show(this, "Eliminando...", ToastNotification.Type.SUCCESS);
         AuditService.log(userEmail, "VAULT_DELETE", "Eliminado: " + serviceId);

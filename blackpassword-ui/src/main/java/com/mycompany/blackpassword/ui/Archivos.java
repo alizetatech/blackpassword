@@ -75,6 +75,7 @@ public class Archivos extends javax.swing.JInternalFrame {
                 + "showVerticalLines: false");
         
         table.getTableHeader().putClientProperty(FlatClientProperties.STYLE, "font: bold; background: #F8F9FA; separatorColor: #E0E0E0");
+        table.getTableHeader().setReorderingAllowed(false);
 
         String fieldStyle = "arc: 12; margin: 6,12,6,12; background: #FFFFFF; borderWidth: 1; focusColor: #0078D4";
         txtNombre.putClientProperty(FlatClientProperties.STYLE, fieldStyle);
@@ -232,6 +233,7 @@ public class Archivos extends javax.swing.JInternalFrame {
             @Override public boolean isCellEditable(int r, int c) { return false; }
         };
         table = new JTable(model);
+        table.getTableHeader().setReorderingAllowed(false);
         JScrollPane scroll = new JScrollPane(table);
         scroll.setBorder(BorderFactory.createLineBorder(new Color(230, 230, 230)));
         panelCenter.add(scroll, BorderLayout.CENTER);
@@ -352,8 +354,27 @@ public class Archivos extends javax.swing.JInternalFrame {
     }
 
     private void editarMetadata() {
+        validarIntegridad();
         int fila = table.getSelectedRow();
         if (fila == -1) return;
+
+        JPasswordField pfPin = new JPasswordField(4);
+        pfPin.putClientProperty(FlatClientProperties.STYLE, "showRevealButton: true;");
+        if (JOptionPane.showConfirmDialog(this, new Object[]{"Para editar metadatos del archivo, ingrese su PIN de seguridad:", pfPin}, "Verificación de Seguridad", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        char[] pin = pfPin.getPassword();
+        boolean validPin = SecuritySession.verifyUserPin(pin);
+        Arrays.fill(pin, '0');
+
+        if (!validPin) {
+            com.mycompany.blackpassword.services.IntrusionService.reportFailure(userEmail, "FILES_PIN_EDIT");
+            JOptionPane.showMessageDialog(this, "PIN incorrecto. Edición cancelada.", "Error de Seguridad", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        com.mycompany.blackpassword.services.IntrusionService.reportSuccess(userEmail);
+
         try {
             String docId = model.getValueAt(table.convertRowIndexToModel(fila), 3).toString();
             Firestore db = FirebaseService.getFirestore();
@@ -423,11 +444,37 @@ public class Archivos extends javax.swing.JInternalFrame {
     }
 
     private void eliminarArchivo() {
+        validarIntegridad();
         int fila = table.getSelectedRow();
-        if (fila == -1 || JOptionPane.showConfirmDialog(this, "¿Eliminar permanentemente?") != JOptionPane.YES_OPTION) return;
+        if (fila == -1) return;
+
+        int modelRow = table.convertRowIndexToModel(fila);
+        String nombreArchivo = String.valueOf(model.getValueAt(modelRow, 0));
+
+        if (JOptionPane.showConfirmDialog(this, "¿Eliminar permanentemente el archivo '" + nombreArchivo + "' de la nube?", "CONFIRMAR ELIMINACIÓN", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) {
+            return;
+        }
+
+        JPasswordField pfPin = new JPasswordField(4);
+        pfPin.putClientProperty(FlatClientProperties.STYLE, "showRevealButton: true;");
+        if (JOptionPane.showConfirmDialog(this, new Object[]{"Para autorizar la eliminación de '" + nombreArchivo + "', ingrese su PIN de seguridad:", pfPin}, "Verificación de Seguridad", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        char[] pin = pfPin.getPassword();
+        boolean validPin = SecuritySession.verifyUserPin(pin);
+        Arrays.fill(pin, '0');
+
+        if (!validPin) {
+            com.mycompany.blackpassword.services.IntrusionService.reportFailure(userEmail, "FILES_PIN_DELETE");
+            JOptionPane.showMessageDialog(this, "PIN incorrecto. Eliminación cancelada.", "Error de Seguridad", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        com.mycompany.blackpassword.services.IntrusionService.reportSuccess(userEmail);
+
         new Thread(() -> {
             try {
-                String docId = model.getValueAt(table.convertRowIndexToModel(fila), 3).toString();
+                String docId = model.getValueAt(modelRow, 3).toString();
                 
                 char[] emailChars = userEmail.toCharArray();
                 char[] hashChars = RSALogica.hashToHex(emailChars, null);
@@ -438,11 +485,17 @@ public class Archivos extends javax.swing.JInternalFrame {
                 String path = RSALogica.hashConstantToHex("usuarios") + "/" + emailHash + "/" + RSALogica.hashConstantToHex("archivos");
                 var deleteFuture = FirebaseService.getFirestore().collection(java.util.Objects.requireNonNull(path)).document(java.util.Objects.requireNonNull(docId)).delete();
                 deleteFuture.get();
+                AuditService.log(userEmail, "FILE_DELETE", "Archivo eliminado: " + nombreArchivo);
                 java.awt.EventQueue.invokeLater(() -> {
+                    ToastNotification.show(this, "Archivo eliminado correctamente.", ToastNotification.Type.SUCCESS);
                     cargarArchivosDesdeFirebase();
                     resetForm();
                 });
-            } catch (Exception e) {}
+            } catch (Exception e) {
+                java.awt.EventQueue.invokeLater(() -> {
+                    ToastNotification.show(this, "Error al eliminar el archivo.", ToastNotification.Type.ERROR);
+                });
+            }
         }).start();
     }
 

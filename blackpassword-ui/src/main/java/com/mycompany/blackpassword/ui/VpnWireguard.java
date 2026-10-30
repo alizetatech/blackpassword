@@ -345,6 +345,7 @@ public class VpnWireguard extends JInternalFrame {
             @Override public boolean isCellEditable(int row, int col) { return false; }
         };
         tblPerfiles = new JTable(modelPerfiles);
+        tblPerfiles.getTableHeader().setReorderingAllowed(false);
         tblPerfiles.setRowHeight(32);
         tblPerfiles.putClientProperty(FlatClientProperties.STYLE, "showHorizontalLines: true; selectionBackground: #E0E7FF");
 
@@ -661,18 +662,44 @@ public class VpnWireguard extends JInternalFrame {
 
     private void alternarEstadoTunel() {
         if (WireguardService.isTunnelActivo()) {
-            // Desconectar
-            boolean ok = WireguardService.desactivarTunel();
-            if (ok) {
-                ToastNotification.show(this, "Túnel WireGuard desconectado.", ToastNotification.Type.INFO);
-                AuditService.log(userEmail, "WG_TUNNEL_DISCONNECTED", "Túnel WireGuard desactivado.");
-            }
-            actualizarVisualesEstado(false);
+            btnToggleTunnel.setEnabled(false);
+            btnToggleTunnel.setText("⏳ DESCONECTANDO TÚNEL...");
+
+            SwingWorker<Boolean, Void> worker = new SwingWorker<>() {
+                @Override
+                protected Boolean doInBackground() {
+                    return WireguardService.desactivarTunel();
+                }
+
+                @Override
+                protected void done() {
+                    btnToggleTunnel.setEnabled(true);
+                    actualizarVisualesEstado(false);
+                    ToastNotification.show(VpnWireguard.this, "Túnel WireGuard desconectado.", ToastNotification.Type.INFO);
+                    AuditService.log(userEmail, "WG_TUNNEL_DISCONNECTED", "Túnel WireGuard desactivado.");
+                }
+            };
+            worker.execute();
         } else {
-            // Conectar
             WireguardProfile p = (WireguardProfile) cbPerfiles.getSelectedItem();
             if (p == null) {
-                ToastNotification.show(this, "Debe seleccionar un perfil guardado en Firebase o cargar uno.", ToastNotification.Type.WARNING);
+                String raw = txtConfigRaw.getText().trim();
+                String name = txtNombrePerfil.getText().trim();
+                if (!raw.isEmpty() && raw.contains("[Interface]")) {
+                    p = WireguardService.parseConfig(raw, name.isEmpty() ? "Perfil Directo" : name);
+                } else {
+                    ToastNotification.show(this, "Debe seleccionar un perfil guardado en Firebase o configurarlo en la pestaña 'Perfiles'.", ToastNotification.Type.WARNING);
+                    return;
+                }
+            }
+
+            if (p.privateKey == null || p.privateKey.trim().isEmpty()) {
+                ToastNotification.show(this, "El perfil seleccionado no tiene una Clave Privada (PrivateKey). Vaya a la pestaña 'Perfiles' para configurarla.", ToastNotification.Type.WARNING);
+                return;
+            }
+
+            if (p.endpoint == null || p.endpoint.trim().isEmpty()) {
+                ToastNotification.show(this, "El perfil seleccionado no tiene un servidor (Endpoint) configurado. Vaya a la pestaña 'Perfiles'.", ToastNotification.Type.WARNING);
                 return;
             }
 
@@ -686,15 +713,39 @@ public class VpnWireguard extends JInternalFrame {
                 return;
             }
 
-            boolean ok = WireguardService.activarTunel(p);
-            if (ok) {
-                ToastNotification.show(this, "¡Túnel WireGuard conectado y protegido!", ToastNotification.Type.SUCCESS);
-                AuditService.log(userEmail, "WG_TUNNEL_CONNECTED", "Túnel conectado hacia: " + p.endpoint);
-                actualizarVisualesEstado(true);
-            } else {
-                ToastNotification.show(this, "No se pudo activar el servicio de túnel. Verifique permisos.", ToastNotification.Type.ERROR);
-                actualizarVisualesEstado(false);
-            }
+            final WireguardProfile perfilParaActivar = p;
+            btnToggleTunnel.setEnabled(false);
+            btnToggleTunnel.setText("⏳ ACTIVANDO TÚNEL (AUTORICE EN WINDOWS)...");
+
+            SwingWorker<WireguardService.TunnelResult, Void> worker = new SwingWorker<>() {
+                @Override
+                protected WireguardService.TunnelResult doInBackground() {
+                    return WireguardService.activarTunelConDetalle(perfilParaActivar);
+                }
+
+                @Override
+                protected void done() {
+                    btnToggleTunnel.setEnabled(true);
+                    try {
+                        WireguardService.TunnelResult res = get();
+                        if (res != null && res.success) {
+                            ToastNotification.show(VpnWireguard.this, "¡Túnel WireGuard conectado y protegido!", ToastNotification.Type.SUCCESS);
+                            AuditService.log(userEmail, "WG_TUNNEL_CONNECTED", "Túnel conectado hacia: " + perfilParaActivar.endpoint);
+                            actualizarVisualesEstado(true);
+                        } else {
+                            String msg = (res != null && res.errorMessage != null)
+                                    ? res.errorMessage
+                                    : "No se pudo activar el servicio de túnel. Verifique permisos de Administrador.";
+                            ToastNotification.show(VpnWireguard.this, msg, ToastNotification.Type.ERROR);
+                            actualizarVisualesEstado(false);
+                        }
+                    } catch (Exception ex) {
+                        ToastNotification.show(VpnWireguard.this, "Error: " + ex.getMessage(), ToastNotification.Type.ERROR);
+                        actualizarVisualesEstado(false);
+                    }
+                }
+            };
+            worker.execute();
         }
     }
 

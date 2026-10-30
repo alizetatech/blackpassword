@@ -877,6 +877,7 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
         };
 
         addressTable = new JTable(addressTableModel);
+        addressTable.getTableHeader().setReorderingAllowed(false);
         addressTable.putClientProperty(FlatClientProperties.STYLE, "rowHeight: 34; showHorizontalLines: true");
         addressTable.getColumnModel().getColumn(0).setPreferredWidth(180);
         addressTable.getColumnModel().getColumn(1).setPreferredWidth(340);
@@ -1049,6 +1050,7 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
         };
 
         txTable = new JTable(txTableModel);
+        txTable.getTableHeader().setReorderingAllowed(false);
         txTable.putClientProperty(FlatClientProperties.STYLE, "rowHeight: 34; showHorizontalLines: true");
         txTable.getColumnModel().getColumn(0).setPreferredWidth(110);
         txTable.getColumnModel().getColumn(1).setPreferredWidth(140);
@@ -1508,6 +1510,7 @@ public class BilleteraBitcoin extends javax.swing.JInternalFrame {
         };
 
         tblSeeds = new JTable(seedTableModel);
+        tblSeeds.getTableHeader().setReorderingAllowed(false);
         tblSeeds.setRowHeight(34);
         tblSeeds.putClientProperty(FlatClientProperties.STYLE, "showHorizontalLines: true; selectionBackground: #E0E7FF; selectionForeground: #1E1B4B");
         tblSeeds.getTableHeader().putClientProperty(FlatClientProperties.STYLE, "font: bold 12; background: #F8FAFC");

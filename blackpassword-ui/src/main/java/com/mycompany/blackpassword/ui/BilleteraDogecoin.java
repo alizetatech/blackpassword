@@ -863,6 +863,7 @@ public class BilleteraDogecoin extends JInternalFrame {
         };
 
         addressTable = new JTable(addressTableModel);
+        addressTable.getTableHeader().setReorderingAllowed(false);
         addressTable.setRowHeight(36);
         addressTable.putClientProperty(FlatClientProperties.STYLE, "showHorizontalLines: true; selectionBackground: #FEF3C7; selectionForeground: #78350F");
         addressTable.getTableHeader().putClientProperty(FlatClientProperties.STYLE, "font: bold 12; background: #FDFBF0");
@@ -904,6 +905,7 @@ public class BilleteraDogecoin extends JInternalFrame {
         };
 
         txTable = new JTable(txTableModel);
+        txTable.getTableHeader().setReorderingAllowed(false);
         txTable.setRowHeight(36);
         txTable.putClientProperty(FlatClientProperties.STYLE, "showHorizontalLines: true; selectionBackground: #FEF3C7; selectionForeground: #78350F");
         txTable.getTableHeader().putClientProperty(FlatClientProperties.STYLE, "font: bold 12; background: #FDFBF0");
@@ -982,6 +984,7 @@ public class BilleteraDogecoin extends JInternalFrame {
         };
 
         tblSeeds = new JTable(seedTableModel);
+        tblSeeds.getTableHeader().setReorderingAllowed(false);
         tblSeeds.setRowHeight(34);
         tblSeeds.putClientProperty(FlatClientProperties.STYLE, "showHorizontalLines: true; selectionBackground: #FEF3C7; selectionForeground: #78350F");
         tblSeeds.getTableHeader().putClientProperty(FlatClientProperties.STYLE, "font: bold 12; background: #FDFBF0");

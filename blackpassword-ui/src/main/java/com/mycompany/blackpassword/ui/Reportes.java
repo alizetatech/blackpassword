@@ -42,6 +42,7 @@ public class Reportes extends javax.swing.JInternalFrame {
         lblTitulo.putClientProperty(FlatClientProperties.STYLE, "font: $h1.font; foreground: #0078D4");
         
         jTable1.putClientProperty(FlatClientProperties.STYLE, "showHorizontalLines: true; rowHeight: 40; selectionBackground: #E1F0FE");
+        jTable1.getTableHeader().setReorderingAllowed(false);
         jScrollPane1.putClientProperty(FlatClientProperties.STYLE, "border: 0,0,0,0; background: #FFFFFF");
         
         btnExportar.putClientProperty(FlatClientProperties.STYLE, 
