@@ -126,7 +126,18 @@ public class GeneradorCek extends javax.swing.JInternalFrame {
         if (currentCek == null) return;
         String b64 = Base64.getEncoder().encodeToString(currentCek);
         Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(b64), null);
-        ToastNotification.show(this, "Llave copiada al portapapeles", ToastNotification.Type.SUCCESS);
+        ToastNotification.show(this, "Llave copiada al portapapeles (expira en 30s)", ToastNotification.Type.SUCCESS);
+        javax.swing.Timer purgeTimer = new javax.swing.Timer(30000, evt -> {
+            try {
+                java.awt.datatransfer.Clipboard clip = Toolkit.getDefaultToolkit().getSystemClipboard();
+                if (clip.isDataFlavorAvailable(java.awt.datatransfer.DataFlavor.stringFlavor)) {
+                    String cur = (String) clip.getData(java.awt.datatransfer.DataFlavor.stringFlavor);
+                    if (b64.equals(cur)) clip.setContents(new StringSelection(""), null);
+                }
+            } catch (Exception ignored) {}
+        });
+        purgeTimer.setRepeats(false);
+        purgeTimer.start();
     }
 
     private void exportToFile() {

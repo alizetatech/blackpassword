@@ -35,11 +35,20 @@ public class ExportService {
                 String raw = new String(decBytes, StandardCharsets.UTF_8);
                 
                 String s = "N/A", u = "N/A", p = "N/A";
-                for (String part : raw.split("\\|")) {
-                    if (part.startsWith("s:")) s = part.substring(2);
-                    if (part.startsWith("u:")) u = part.substring(2);
-                    if (part.startsWith("p:")) p = part.substring(2);
+                int uIdx = raw.indexOf("|u:");
+                int pIdx = raw.indexOf("|p:", uIdx >= 0 ? uIdx : 0);
+                if (raw.startsWith("s:") && uIdx > 2 && pIdx > uIdx) {
+                    s = raw.substring(2, uIdx);
+                    u = raw.substring(uIdx + 3, pIdx);
+                    p = raw.substring(pIdx + 3);
+                } else {
+                    for (String part : raw.split("\\|")) {
+                        if (part.startsWith("s:")) s = part.substring(2);
+                        if (part.startsWith("u:")) u = part.substring(2);
+                        if (part.startsWith("p:")) p = part.substring(2);
+                    }
                 }
+                java.util.Arrays.fill(decBytes, (byte) 0);
                 
                 // Escapar comas para formato CSV
                 s = s.replace(",", ";");

@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.concurrent.TimeUnit;
@@ -18,7 +19,7 @@ import java.util.concurrent.TimeUnit;
  * Adaptado para despliegue en GlassFish (Puerto 8080 / Context: fortaleza).
  * 
  * SEGURIDAD: Los métodos que aceptan passwords usan char[] para evitar
- * que las contraseñas permanezcan en String Pool.
+ * que las contraseñas permanezcan en String Pool y aplican SHA-256 antes del envío.
  */
 public class ServerService {
 
@@ -128,9 +129,16 @@ public class ServerService {
     private byte[] toBytes(char[] chars) {
         CharBuffer cb = CharBuffer.wrap(chars);
         ByteBuffer bb = StandardCharsets.UTF_8.encode(cb);
-        byte[] result = Arrays.copyOfRange(bb.array(), bb.position(), bb.limit());
+        byte[] raw = Arrays.copyOfRange(bb.array(), bb.position(), bb.limit());
         Arrays.fill(bb.array(), (byte) 0);
-        return result;
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            return md.digest(raw);
+        } catch (Exception e) {
+            throw new RuntimeException("Error aplicando hash SHA-256 a credencial", e);
+        } finally {
+            Arrays.fill(raw, (byte) 0);
+        }
     }
 
     public boolean storeSecret(String identifier, String content, String description) throws IOException {
@@ -193,5 +201,17 @@ public class ServerService {
 
     public boolean isConnected() { return jwtToken != null; }
     public void logout() { this.jwtToken = null; }
-    public void setBaseUrl(String url) { this.baseUrl = url; }
+    public void setBaseUrl(String url) {
+        if (url == null || url.isBlank()) {
+            throw new IllegalArgumentException("La URL del servidor no puede estar vacía.");
+        }
+        String trimmed = url.trim();
+        String lower = trimmed.toLowerCase();
+        boolean isLoopback = lower.startsWith("http://localhost:") || lower.startsWith("http://localhost/")
+                || lower.startsWith("http://127.0.0.1:") || lower.startsWith("http://127.0.0.1/");
+        if (!lower.startsWith("https://") && !isLoopback) {
+            throw new SecurityException("Por seguridad, las conexiones a servidores remotos deben utilizar HTTPS (TLS).");
+        }
+        this.baseUrl = trimmed;
+    }
 }

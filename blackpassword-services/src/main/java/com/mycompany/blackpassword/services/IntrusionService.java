@@ -35,10 +35,12 @@ public class IntrusionService {
         if ("RSA_BINDING_VIOLATION".equals(type) || attempts >= MAX_ATTEMPTS) {
             System.err.println("[IntrusionService] 🚨 AMENAZA CRÍTICA DETECTADA (" + type + "). Ejecutando purga de seguridad...");
             
-            // OPCIÓN NUCLEAR: Borrar rastro local
+            // OPCIÓN NUCLEAR: Borrar rastro local y revocar llaves de sesión activa en RAM
             LocalDatabaseService.clearCache(email);
-            
             generateIntrusionAlert(email, type, attempts);
+            if (SecuritySession.isSessionActive()) {
+                SecuritySession.clear();
+            }
             failureMap.put(email, 0); 
         }
     }

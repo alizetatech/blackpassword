@@ -24,6 +24,7 @@ import javax.swing.JDesktopPane; // Importación añadida
 public class ImageViewer extends JInternalFrame {
 
     private final File imageFile;
+    private Image memoryImage;
     private final JLabel lblImage;
     private final MenuPrincipal parentDashboard;
 
@@ -31,11 +32,22 @@ public class ImageViewer extends JInternalFrame {
         super("Visor de Imágenes: " + file.getName(), true, true, true, true);
         this.parentDashboard = dashboard;
         this.imageFile = file;
+        this.memoryImage = null;
         this.lblImage = new JLabel("", SwingConstants.CENTER);
         
         initComponents();
         applyPremiumStyle();
-        // loadImage(); // Se llamará externamente después de pack()
+    }
+
+    public ImageViewer(MenuPrincipal dashboard, String title, Image image) {
+        super("Visor de Imágenes: " + title, true, true, true, true);
+        this.parentDashboard = dashboard;
+        this.imageFile = null;
+        this.memoryImage = image;
+        this.lblImage = new JLabel("", SwingConstants.CENTER);
+        
+        initComponents();
+        applyPremiumStyle();
     }
 
     private void initComponents() {
@@ -70,14 +82,13 @@ public class ImageViewer extends JInternalFrame {
     }
 
     public void loadImage() { // Método hecho público
-        if (imageFile == null || !imageFile.exists()) {
+        if (memoryImage == null && (imageFile == null || !imageFile.exists())) {
             lblImage.setText("No se pudo cargar la imagen.");
             lblImage.setIcon(null);
             return;
         }
         try {
-            ImageIcon originalIcon = new ImageIcon(imageFile.getAbsolutePath());
-            Image originalImage = originalIcon.getImage();
+            Image originalImage = (memoryImage != null) ? memoryImage : new ImageIcon(imageFile.getAbsolutePath()).getImage();
 
             int panelWidth = lblImage.getWidth() > 0 ? lblImage.getWidth() : getWidth();
             int panelHeight = lblImage.getHeight() > 0 ? lblImage.getHeight() : getHeight() - 50; // Restar altura de botones
@@ -94,7 +105,10 @@ public class ImageViewer extends JInternalFrame {
     }
 
     private void setAsBackground() {
-        if (parentDashboard != null && imageFile != null) {
+        if (parentDashboard != null && memoryImage != null) {
+            parentDashboard.setDashboardBackgroundImage(memoryImage);
+            JOptionPane.showMessageDialog(this, "Imagen establecida como fondo del dashboard (en memoria segura).", "Fondo Personalizado", JOptionPane.INFORMATION_MESSAGE);
+        } else if (parentDashboard != null && imageFile != null) {
             parentDashboard.setDashboardBackground(imageFile);
             JOptionPane.showMessageDialog(this, "Imagen establecida como fondo del dashboard.", "Fondo Personalizado", JOptionPane.INFORMATION_MESSAGE);
         } else {

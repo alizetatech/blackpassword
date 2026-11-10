@@ -205,6 +205,7 @@ public class Reportes extends javax.swing.JInternalFrame {
         int okCxl = JOptionPane.showConfirmDialog(this, pf, "Confirme su PIN para exportar", JOptionPane.OK_CANCEL_OPTION);
         
         if (okCxl == JOptionPane.OK_OPTION && SecuritySession.verifyUserPin(pf.getPassword())) {
+            IntrusionService.reportSuccess(userEmail);
             JFileChooser fc = new JFileChooser();
             fc.setDialogTitle("Guardar Reporte de Seguridad");
             fc.setSelectedFile(new File("Reporte_Seguridad_" + System.currentTimeMillis() + ".pdf"));
@@ -230,6 +231,7 @@ public class Reportes extends javax.swing.JInternalFrame {
                 }
             }
         } else if (okCxl == JOptionPane.OK_OPTION) {
+            IntrusionService.reportFailure(userEmail, "REPORT_EXPORT_PIN");
             ToastNotification.show(this, "PIN incorrecto.", ToastNotification.Type.ERROR);
         }
     }

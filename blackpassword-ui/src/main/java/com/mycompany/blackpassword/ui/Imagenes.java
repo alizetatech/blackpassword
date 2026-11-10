@@ -306,9 +306,17 @@ public class Imagenes extends javax.swing.JInternalFrame {
                     try {
                         byte[] dec = RSALogica.descifrarBytesHibrido(Base64.getDecoder().decode(doc.getString("metadata_cifrada")), SecuritySession.getPrivateKey());
                         String meta = new String(dec, StandardCharsets.UTF_8);
-                        for (String p : meta.split("\\|")) {
-                            if (p.startsWith("n:")) nombre = p.substring(2);
-                            if (p.startsWith("c:")) carpeta = p.substring(2);
+                        java.util.Arrays.fill(dec, (byte) 0);
+                        int cIdx = meta.indexOf("|c:");
+                        int rIdx = meta.indexOf("|r:", cIdx >= 0 ? cIdx : 0);
+                        if (meta.startsWith("n:") && cIdx >= 2) {
+                            nombre = meta.substring(2, cIdx);
+                            carpeta = (rIdx > cIdx) ? meta.substring(cIdx + 3, rIdx) : meta.substring(cIdx + 3);
+                        } else {
+                            for (String p : meta.split("\\|")) {
+                                if (p.startsWith("n:")) nombre = p.substring(2);
+                                if (p.startsWith("c:")) carpeta = p.substring(2);
+                            }
                         }
                     } catch (Exception e) {}
                     String finalN = nombre, finalC = carpeta;
@@ -416,10 +424,19 @@ public class Imagenes extends javax.swing.JInternalFrame {
             if (doc.contains("metadata_cifrada")) {
                 byte[] dec = RSALogica.descifrarBytesHibrido(Base64.getDecoder().decode(doc.getString("metadata_cifrada")), SecuritySession.getPrivateKey());
                 String meta = new String(dec, StandardCharsets.UTF_8);
-                for (String p : meta.split("\\|")) {
-                    if (p.startsWith("n:")) txtNombre.setText(p.substring(2));
-                    if (p.startsWith("c:")) txtCarpeta.setText(p.substring(2));
-                    if (p.startsWith("r:")) txtRecordatorio.setText(p.substring(2));
+                java.util.Arrays.fill(dec, (byte) 0);
+                int cIdx = meta.indexOf("|c:");
+                int rIdx = meta.indexOf("|r:", cIdx >= 0 ? cIdx : 0);
+                if (meta.startsWith("n:") && cIdx >= 2 && rIdx > cIdx) {
+                    txtNombre.setText(meta.substring(2, cIdx));
+                    txtCarpeta.setText(meta.substring(cIdx + 3, rIdx));
+                    txtRecordatorio.setText(meta.substring(rIdx + 3));
+                } else {
+                    for (String p : meta.split("\\|")) {
+                        if (p.startsWith("n:")) txtNombre.setText(p.substring(2));
+                        if (p.startsWith("c:")) txtCarpeta.setText(p.substring(2));
+                        if (p.startsWith("r:")) txtRecordatorio.setText(p.substring(2));
+                    }
                 }
             }
             idDocumentoEdicion = docId;
@@ -430,41 +447,82 @@ public class Imagenes extends javax.swing.JInternalFrame {
         } catch (Exception e) {}
     }
 
+    private boolean solicitarPinParaAccion(String accionDesc) {
+        JPasswordField pfPin = new JPasswordField(4);
+        pfPin.putClientProperty(FlatClientProperties.STYLE, "showRevealButton: true;");
+        if (JOptionPane.showConfirmDialog(this, new Object[]{"Para " + accionDesc + ", ingrese su PIN de seguridad:", pfPin}, "Verificación de Seguridad", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) {
+            return false;
+        }
+        char[] pin = pfPin.getPassword();
+        boolean valid = SecuritySession.verifyUserPin(pin);
+        java.util.Arrays.fill(pin, '0');
+        if (!valid) {
+            com.mycompany.blackpassword.services.IntrusionService.reportFailure(userEmail, "IMAGES_PIN");
+            JOptionPane.showMessageDialog(this, "PIN incorrecto. Acción cancelada.", "Error de Seguridad", JOptionPane.ERROR_MESSAGE);
+            return false;
+        }
+        com.mycompany.blackpassword.services.IntrusionService.reportSuccess(userEmail);
+        return true;
+    }
+
     private void verImagen() {
+        validarIntegridad();
         int fila = table.getSelectedRow();
         if (fila == -1) return;
+        int modelRow = table.convertRowIndexToModel(fila);
+        String nombreImg = String.valueOf(model.getValueAt(modelRow, 0));
+        if (!solicitarPinParaAccion("visualizar la imagen '" + nombreImg + "'")) {
+            return;
+        }
         new Thread(() -> {
+            byte[] dec = null;
             try {
-                String docId = model.getValueAt(table.convertRowIndexToModel(fila), 2).toString();
+                String docId = model.getValueAt(modelRow, 2).toString();
                 String storagePath = getStoragePath(docId);
                 Blob blob = FirebaseService.getStorageBucket().get(storagePath);
-                byte[] dec = RSALogica.descifrarBytesHibrido(blob.getContent(), SecuritySession.getPrivateKey());
-                File temp = File.createTempFile("bp_img_", ".png");
-                Files.write(temp.toPath(), dec);
-                temp.deleteOnExit();
+                dec = RSALogica.descifrarBytesHibrido(blob.getContent(), SecuritySession.getPrivateKey());
+                final Image img = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(dec));
                 
                 java.awt.EventQueue.invokeLater(() -> {
-                    ImageViewer viewer = new ImageViewer(parentMenu, temp);
+                    ImageViewer viewer = new ImageViewer(parentMenu, nombreImg, img);
                     getDesktopPane().add(viewer);
-                    viewer.setVisible(true); viewer.loadImage();
+                    viewer.setVisible(true);
+                    viewer.loadImage();
                 });
-            } catch (Exception e) { e.printStackTrace(); }
+            } catch (Exception e) {
+                e.printStackTrace();
+            } finally {
+                if (dec != null) java.util.Arrays.fill(dec, (byte) 0);
+            }
         }).start();
     }
 
     private void descargarImagen() {
+        validarIntegridad();
         int fila = table.getSelectedRow();
         if (fila == -1) return;
+        int modelRow = table.convertRowIndexToModel(fila);
+        String nombreImg = String.valueOf(model.getValueAt(modelRow, 0));
+        if (!solicitarPinParaAccion("descargar la imagen '" + nombreImg + "'")) {
+            return;
+        }
         new Thread(() -> {
             try {
-                String docId = model.getValueAt(table.convertRowIndexToModel(fila), 2).toString();
+                String docId = model.getValueAt(modelRow, 2).toString();
                 Blob blob = FirebaseService.getStorageBucket().get(getStoragePath(docId));
                 byte[] dec = RSALogica.descifrarBytesHibrido(blob.getContent(), SecuritySession.getPrivateKey());
                 java.awt.EventQueue.invokeLater(() -> {
-                    JFileChooser fc = new JFileChooser();
-                    fc.setSelectedFile(new File(model.getValueAt(fila, 0).toString() + ".png"));
-                    if (fc.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
-                        try { Files.write(fc.getSelectedFile().toPath(), dec); } catch (Exception e) {}
+                    try {
+                        JFileChooser fc = new JFileChooser();
+                        fc.setSelectedFile(new File(nombreImg + ".png"));
+                        if (fc.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
+                            Files.write(fc.getSelectedFile().toPath(), dec);
+                            ToastNotification.show(this, "Imagen descargada correctamente.", ToastNotification.Type.SUCCESS);
+                        }
+                    } catch (Exception e) {
+                        ToastNotification.show(this, "Error al guardar imagen.", ToastNotification.Type.ERROR);
+                    } finally {
+                        java.util.Arrays.fill(dec, (byte) 0);
                     }
                 });
             } catch (Exception e) {}

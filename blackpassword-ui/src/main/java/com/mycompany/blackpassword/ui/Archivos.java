@@ -281,9 +281,17 @@ public class Archivos extends javax.swing.JInternalFrame {
                         if (doc.contains("metadata_cifrada")) {
                             byte[] dec = RSALogica.descifrarBytesHibrido(Base64.getDecoder().decode(doc.getString("metadata_cifrada")), SecuritySession.getPrivateKey());
                             String meta = new String(dec, StandardCharsets.UTF_8);
-                            for (String p : meta.split("\\|")) {
-                                if (p.startsWith("n:")) nombre = p.substring(2);
-                                if (p.startsWith("c:")) carpeta = p.substring(2);
+                            java.util.Arrays.fill(dec, (byte) 0);
+                            int cIdx = meta.indexOf("|c:");
+                            int rIdx = meta.indexOf("|r:", cIdx >= 0 ? cIdx : 0);
+                            if (meta.startsWith("n:") && cIdx >= 2) {
+                                nombre = meta.substring(2, cIdx);
+                                carpeta = (rIdx > cIdx) ? meta.substring(cIdx + 3, rIdx) : meta.substring(cIdx + 3);
+                            } else {
+                                for (String p : meta.split("\\|")) {
+                                    if (p.startsWith("n:")) nombre = p.substring(2);
+                                    if (p.startsWith("c:")) carpeta = p.substring(2);
+                                }
                             }
                         }
                         com.google.cloud.Timestamp createTime = doc.getCreateTime();
@@ -391,10 +399,19 @@ public class Archivos extends javax.swing.JInternalFrame {
             if (doc.contains("metadata_cifrada")) {
                 byte[] dec = RSALogica.descifrarBytesHibrido(Base64.getDecoder().decode(doc.getString("metadata_cifrada")), SecuritySession.getPrivateKey());
                 String meta = new String(dec, StandardCharsets.UTF_8);
-                for (String p : meta.split("\\|")) {
-                    if (p.startsWith("n:")) txtNombre.setText(p.substring(2));
-                    if (p.startsWith("c:")) txtCarpeta.setText(p.substring(2));
-                    if (p.startsWith("r:")) txtRecordatorio.setText(p.substring(2));
+                java.util.Arrays.fill(dec, (byte) 0);
+                int cIdx = meta.indexOf("|c:");
+                int rIdx = meta.indexOf("|r:", cIdx >= 0 ? cIdx : 0);
+                if (meta.startsWith("n:") && cIdx >= 2 && rIdx > cIdx) {
+                    txtNombre.setText(meta.substring(2, cIdx));
+                    txtCarpeta.setText(meta.substring(cIdx + 3, rIdx));
+                    txtRecordatorio.setText(meta.substring(rIdx + 3));
+                } else {
+                    for (String p : meta.split("\\|")) {
+                        if (p.startsWith("n:")) txtNombre.setText(p.substring(2));
+                        if (p.startsWith("c:")) txtCarpeta.setText(p.substring(2));
+                        if (p.startsWith("r:")) txtRecordatorio.setText(p.substring(2));
+                    }
                 }
             }
             idDocumentoEdicion = docId;
@@ -405,14 +422,19 @@ public class Archivos extends javax.swing.JInternalFrame {
     }
 
     private void descargarArchivo() {
+        validarIntegridad();
         int fila = table.getSelectedRow();
         if (fila == -1) return;
+        int modelRow = table.convertRowIndexToModel(fila);
+        String nombreArchivo = String.valueOf(model.getValueAt(modelRow, 0));
         JPasswordField pf = new JPasswordField(4);
+        pf.putClientProperty(FlatClientProperties.STYLE, "showRevealButton: true;");
         if (JOptionPane.showConfirmDialog(this, new Object[]{"PIN de seguridad:", pf}, "Verificación", JOptionPane.OK_CANCEL_OPTION) == JOptionPane.OK_OPTION) {
             if (SecuritySession.verifyUserPin(pf.getPassword())) {
+                com.mycompany.blackpassword.services.IntrusionService.reportSuccess(userEmail);
                 new Thread(() -> {
                     try {
-                        String docId = model.getValueAt(table.convertRowIndexToModel(fila), 3).toString();
+                        String docId = model.getValueAt(modelRow, 3).toString();
                         
                         char[] emailChars = userEmail.toCharArray();
                         char[] hashChars = RSALogica.hashToHex(emailChars, null);
@@ -426,18 +448,23 @@ public class Archivos extends javax.swing.JInternalFrame {
                         byte[] dec = RSALogica.descifrarBytesHibrido(Base64.getDecoder().decode(doc.getString("contenido_cifrado")), SecuritySession.getPrivateKey());
                         
                         java.awt.EventQueue.invokeLater(() -> {
-                            JFileChooser fc = new JFileChooser();
-                            fc.setSelectedFile(new File(model.getValueAt(fila, 0).toString()));
-                            if (fc.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
-                                try {
+                            try {
+                                JFileChooser fc = new JFileChooser();
+                                fc.setSelectedFile(new File(nombreArchivo));
+                                if (fc.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
                                     Files.write(fc.getSelectedFile().toPath(), dec);
                                     ToastNotification.show(this, "Archivo recuperado", ToastNotification.Type.SUCCESS);
-                                } catch (Exception e) { e.printStackTrace(); }
+                                }
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                            } finally {
+                                java.util.Arrays.fill(dec, (byte) 0);
                             }
                         });
                     } catch (Exception e) { e.printStackTrace(); }
                 }).start();
             } else {
+                com.mycompany.blackpassword.services.IntrusionService.reportFailure(userEmail, "FILES_PIN_DOWNLOAD");
                 JOptionPane.showMessageDialog(this, "PIN incorrecto", "Error", JOptionPane.ERROR_MESSAGE);
             }
         }

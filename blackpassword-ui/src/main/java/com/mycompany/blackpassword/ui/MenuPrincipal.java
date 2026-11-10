@@ -17,19 +17,23 @@ import java.util.prefs.Preferences;
 import javax.imageio.ImageIO;
 
 /**
- * Dashboard Blindado v12.1: Reversión de Suscripciones.
- * Acceso total e ilimitado a todos los módulos de seguridad.
+ * Dashboard Blindado v12.2 (Zero-Disk Edition).
+ * Acceso total e ilimitado a todos los módulos de seguridad sin rastros en el Registro local.
  */
 public class MenuPrincipal extends javax.swing.JInternalFrame {
 
     static {
-        System.out.println("[v12.1] Dashboard cargado. Acceso total habilitado.");
+        System.out.println("[v12.2] Dashboard cargado. Acceso total habilitado (Zero-Disk).");
+        try {
+            Preferences legacyPrefs = Preferences.userNodeForPackage(MenuPrincipal.class);
+            legacyPrefs.clear();
+            legacyPrefs.flush();
+        } catch (Exception ignored) {}
     }
 
     private final String userEmail;
     private final String userName;
     private Image backgroundImage = null;
-    private final Preferences prefs = Preferences.userNodeForPackage(MenuPrincipal.class);
     
     private Timer inactivityTimer;
     private AWTEventListener globalActivityListener;
@@ -186,33 +190,34 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
         if (globalActivityListener != null) Toolkit.getDefaultToolkit().removeAWTEventListener(globalActivityListener);
         LocalDatabaseService.closeAndEncrypt();
         SecuritySession.clear();
-        AuditService.log(userEmail, "LOGOUT_SUCCESS", "Sesión cerrada, BD cifrada y llaves purgadas de RAM.");
+        AuditService.log(userEmail, "LOGOUT_SUCCESS", "Sesión cerrada y llaves purgadas de RAM.");
     }
 
     private void cargarFondoPersistente() {
         try {
-            String path = prefs.get("bg_path_" + userEmail, "");
-            if (!path.isEmpty() && new File(path).exists()) {
-                backgroundImage = ImageIO.read(new File(path));
-            } else {
-                java.net.URL imgUrl = getClass().getResource("/img/blackpassword.png");
-                if (imgUrl != null) backgroundImage = ImageIO.read(imgUrl);
-            }
+            java.net.URL imgUrl = getClass().getResource("/img/blackpassword.png");
+            if (imgUrl != null) backgroundImage = ImageIO.read(imgUrl);
         } catch (Exception e) {
-            System.err.println("[MenuPrincipal] Error al cargar fondo persistente: " + e.getMessage());
+            System.err.println("[MenuPrincipal] Error al cargar fondo predeterminado: " + e.getMessage());
         }
     }
     
     public void setDashboardBackground(File imageFile) {
         try {
             this.backgroundImage = ImageIO.read(imageFile);
-            prefs.put("bg_path_" + userEmail, imageFile.getAbsolutePath());
             internalDesktop.repaint();
-            AuditService.log(userEmail, "DASHBOARD_BACKGROUND_SET", "Fondo de dashboard personalizado.");
+            AuditService.log(userEmail, "DASHBOARD_BACKGROUND_SET", "Fondo de dashboard personalizado en memoria RAM.");
         } catch (Exception e) {
             System.err.println("[MenuPrincipal] Error al establecer fondo: " + e.getMessage());
             JOptionPane.showMessageDialog(this, "Error al establecer la imagen como fondo: " + e.getMessage(), "Error de Fondo", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    public void setDashboardBackgroundImage(Image img) {
+        if (img == null) return;
+        this.backgroundImage = img;
+        internalDesktop.repaint();
+        AuditService.log(userEmail, "DASHBOARD_BACKGROUND_SET", "Fondo de dashboard personalizado desde memoria RAM.");
     }
 
     private void setupInternalCentering() {
@@ -280,7 +285,6 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
         
         rightGroup.add(createNavButton("SALIR", "unlock.svg", e -> ejecutarCierreSesion()));
         
-        isUserNameHidden = prefs.getBoolean("hide_username_" + userEmail, false);
         btnUser = createNavButton("", "user.svg", e -> toggleVisibilidadNombre());
         actualizarBotonUsuario();
         
@@ -368,7 +372,6 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
 
     private void toggleVisibilidadNombre() {
         isUserNameHidden = !isUserNameHidden;
-        prefs.putBoolean("hide_username_" + userEmail, isUserNameHidden);
         actualizarBotonUsuario();
         if (isUserNameHidden) {
             ToastNotification.show(this, "Nombre de usuario ocultado (Modo Privacidad activo).", ToastNotification.Type.INFO);
@@ -402,9 +405,11 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
         if (option == JOptionPane.OK_OPTION) {
             char[] pin = pinField.getPassword();
             if (SecuritySession.verifyUserPin(pin)) {
+                com.mycompany.blackpassword.services.IntrusionService.reportSuccess(userEmail);
                 AuditService.log(userEmail, logPrefix + "_ACCESS_SUCCESS", "Acceso a " + moduloDesc + " autorizado por PIN.");
                 onSuccess.run();
             } else {
+                com.mycompany.blackpassword.services.IntrusionService.reportFailure(userEmail, logPrefix + "_ACCESS_DENIED");
                 AuditService.log(userEmail, logPrefix + "_ACCESS_DENIED", "Intento de acceso a " + moduloDesc + " con PIN incorrecto.");
                 JOptionPane.showMessageDialog(this, "PIN incorrecto. Acceso denegado.", "Error de Seguridad", JOptionPane.ERROR_MESSAGE);
             }
@@ -499,7 +504,6 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
     private void packAndCenter(JInternalFrame frame) {
         frame.pack();
         
-        // Si el frame es más grande que el desktop, lo limitamos al 90%
         int dw = internalDesktop.getWidth();
         int dh = internalDesktop.getHeight();
         int fw = frame.getWidth();

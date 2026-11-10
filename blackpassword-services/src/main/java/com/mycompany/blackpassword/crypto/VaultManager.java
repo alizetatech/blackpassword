@@ -66,9 +66,16 @@ public class VaultManager {
                             byte[] dec = RSALogica.descifrarBytesHibrido(java.util.Base64.getDecoder().decode(enc), SecuritySession.getPrivateKey());
                             String raw = new String(dec, java.nio.charset.StandardCharsets.UTF_8);
                             String s = "DESCONOCIDO", u = "DESCONOCIDO";
-                            for (String part : raw.split("\\|")) {
-                                if (part.startsWith("s:")) s = part.substring(2);
-                                if (part.startsWith("u:")) u = part.substring(2);
+                            int uIdx = raw.indexOf("|u:");
+                            int pIdx = raw.indexOf("|p:", uIdx >= 0 ? uIdx : 0);
+                            if (raw.startsWith("s:") && uIdx > 2 && pIdx > uIdx) {
+                                s = raw.substring(2, uIdx);
+                                u = raw.substring(uIdx + 3, pIdx);
+                            } else {
+                                for (String part : raw.split("\\|")) {
+                                    if (part.startsWith("s:")) s = part.substring(2);
+                                    if (part.startsWith("u:")) u = part.substring(2);
+                                }
                             }
                             
                             Map<String, Object> row = new HashMap<>();
@@ -81,7 +88,6 @@ public class VaultManager {
                             row.put("date", (ts != null) ? ts.toDate().toString().substring(0, 19) : "N/A");
                             
                             combined.add(row);
-                            LocalDatabaseService.syncSecret(s.toUpperCase(), email, enc);
                             
                             com.mycompany.blackpassword.crypto.SecureCharArray.clear(dec);
                         } catch (Exception e) {
@@ -93,8 +99,7 @@ public class VaultManager {
                     }
                 }
             } catch (Exception e) {
-                System.err.println("[VaultManager] Error cargando desde Firebase, usando local: " + e.getMessage());
-                return LocalDatabaseService.getPasswords(email);
+                System.err.println("[VaultManager] Error cargando desde Firebase Cloud: " + e.getMessage());
             }
 
             return combined;

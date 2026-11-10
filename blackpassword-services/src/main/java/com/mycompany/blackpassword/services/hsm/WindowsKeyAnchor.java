@@ -57,6 +57,8 @@ public class WindowsKeyAnchor implements KeyAnchorProvider {
     }
 
     private static boolean jnaAvailable = false;
+    private final java.util.Map<String, PrivateKey> ephemeralKeys = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<String, byte[]> protectorHashes = new java.util.concurrent.ConcurrentHashMap<>();
     
     static {
         try {
@@ -67,17 +69,38 @@ public class WindowsKeyAnchor implements KeyAnchorProvider {
         }
     }
 
+    private byte[] hashProtector(char[] protector) throws Exception {
+        java.nio.ByteBuffer bb = java.nio.charset.StandardCharsets.UTF_8.encode(java.nio.CharBuffer.wrap(protector));
+        byte[] bytes = new byte[bb.remaining()];
+        bb.get(bytes);
+        try {
+            return java.security.MessageDigest.getInstance("SHA-256").digest(bytes);
+        } finally {
+            Arrays.fill(bytes, (byte) 0);
+        }
+    }
+
     @Override
     public void seal(String alias, byte[] secret, char[] protector) throws Exception {
         if (!jnaAvailable) throw new Exception("HSM no disponible.");
         
-        KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA", PROVIDER);
+        KeyPairGenerator kpg;
+        try {
+            kpg = KeyPairGenerator.getInstance("RSA", PROVIDER);
+        } catch (Exception e) {
+            kpg = KeyPairGenerator.getInstance("RSA");
+        }
         kpg.initialize(2048);
         KeyPair kp = kpg.generateKeyPair();
 
         Cipher cipher = Cipher.getInstance(ALGO_RSA);
         cipher.init(Cipher.ENCRYPT_MODE, kp.getPublic());
         byte[] encryptedSecret = cipher.doFinal(secret);
+
+        ephemeralKeys.put(alias, kp.getPrivate());
+        if (protector != null) {
+            protectorHashes.put(alias, hashProtector(protector));
+        }
 
         saveToWinCred(CRED_PREFIX + alias, encryptedSecret);
         
@@ -90,17 +113,29 @@ public class WindowsKeyAnchor implements KeyAnchorProvider {
     public byte[] unseal(String alias, char[] protector) throws Exception {
         if (!jnaAvailable) throw new Exception("HSM no disponible.");
         
+        byte[] expectedHash = protectorHashes.get(alias);
+        if (expectedHash != null) {
+            if (protector == null || !java.security.MessageDigest.isEqual(expectedHash, hashProtector(protector))) {
+                throw new Exception("Acceso HSM denegado: Protector de sesión inválido.");
+            }
+        }
+
         byte[] encryptedSecret = readFromWinCred(CRED_PREFIX + alias);
         if (encryptedSecret == null) throw new Exception("Secreto no disponible en Windows Credential Manager.");
 
-        KeyStore ks = KeyStore.getInstance(KEYSTORE_TYPE, PROVIDER);
-        ks.load(null, null);
+        PrivateKey priv = ephemeralKeys.get(alias);
+        if (priv == null) {
+            KeyStore ks = KeyStore.getInstance(KEYSTORE_TYPE, PROVIDER);
+            ks.load(null, null);
 
-        KeyStore.PasswordProtection protParam = new KeyStore.PasswordProtection(protector);
-        KeyStore.PrivateKeyEntry entry = (KeyStore.PrivateKeyEntry) ks.getEntry(alias, protParam);
+            KeyStore.PasswordProtection protParam = new KeyStore.PasswordProtection(protector);
+            KeyStore.PrivateKeyEntry entry = (KeyStore.PrivateKeyEntry) ks.getEntry(alias, protParam);
+            if (entry != null) {
+                priv = entry.getPrivateKey();
+            }
+        }
         
-        if (entry == null) throw new Exception("Acceso HSM denegado: Entrada protegida no encontrada.");
-        PrivateKey priv = entry.getPrivateKey();
+        if (priv == null) throw new Exception("Acceso HSM denegado: Entrada protegida no encontrada.");
 
         Cipher cipher = Cipher.getInstance(ALGO_RSA);
         cipher.init(Cipher.DECRYPT_MODE, priv);
@@ -115,7 +150,7 @@ public class WindowsKeyAnchor implements KeyAnchorProvider {
             DirectAdvapi32.Credential cred = new DirectAdvapi32.Credential();
             cred.TargetName = targetName;
             cred.Type = 1; // CRED_TYPE_GENERIC
-            cred.Persist = 2; // CRED_PERSIST_LOCAL_MACHINE
+            cred.Persist = 1; // CRED_PERSIST_SESSION (Zero-Disk: solo vive durante la sesión activa de Windows)
             cred.UserName = "Blackpassword_Session";
             cred.CredentialBlobSize = blob.length;
             mem.write(0, blob, 0, blob.length);
@@ -148,6 +183,9 @@ public class WindowsKeyAnchor implements KeyAnchorProvider {
 
     @Override
     public void destroy(String alias) {
+        ephemeralKeys.remove(alias);
+        byte[] h = protectorHashes.remove(alias);
+        if (h != null) Arrays.fill(h, (byte) 0);
         if (!jnaAvailable) return;
         try {
             KeyStore ks = KeyStore.getInstance(KEYSTORE_TYPE, PROVIDER);

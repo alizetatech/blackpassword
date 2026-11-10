@@ -89,7 +89,12 @@ public class SecuritySession {
             return;
         }
         try {
-            byte[] encoded = java.nio.charset.StandardCharsets.UTF_8.encode(java.nio.CharBuffer.wrap(pwd)).array();
+            java.nio.ByteBuffer bb = java.nio.charset.StandardCharsets.UTF_8.encode(java.nio.CharBuffer.wrap(pwd));
+            byte[] encoded = new byte[bb.remaining()];
+            bb.get(encoded);
+            if (bb.hasArray()) {
+                Arrays.fill(bb.array(), (byte) 0);
+            }
             char[] protector = sessionPinHash.toCharArray();
             
             com.mycompany.blackpassword.services.hsm.KeyAnchorService.getInstance().sealSessionKey(HSM_ALIAS, encoded, protector);

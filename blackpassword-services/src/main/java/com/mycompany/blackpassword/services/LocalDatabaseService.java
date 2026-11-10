@@ -1,10 +1,8 @@
 package com.mycompany.blackpassword.services;
 
-import java.nio.CharBuffer;
-import com.google.gson.Gson;
-import com.google.gson.reflect.TypeToken;
+import com.google.cloud.firestore.Firestore;
+import com.google.cloud.firestore.SetOptions;
 import com.mycompany.blackpassword.crypto.RSALogica;
-import java.lang.reflect.Type;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -13,158 +11,54 @@ import java.nio.file.Paths;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.SecureRandom;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.HashMap;
-import java.util.Base64;
+import java.util.concurrent.ConcurrentHashMap;
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
-import com.google.cloud.firestore.Firestore;
 
 /**
- * Servicio de Base de Datos Local v10.0 - HSM-BACKED ENCRYPTION.
- * El archivo SQLite se cifra con AES-256-GCM usando llaves protegidas por el hardware del SO.
+ * Servicio de Persistencia Zero-Disk (100% Firebase Cloud Firestore).
+ * No crea ni mantiene ninguna base de datos SQLite ni archivos locales en el equipo.
  */
 public class LocalDatabaseService {
 
-    private static final String DB_NAME = "blackvault_local.db";
-    private static final String DB_CIPHER_NAME = "blackvault_local.db.enc";
-    private static final String DB_TEMP_CIPHER = "blackvault_local.db.enc.tmp";
+    private static final String LEGACY_DB_NAME = "blackvault_local.db";
+    private static final String LEGACY_DB_CIPHER_NAME = "blackvault_local.db.enc";
+    private static final String LEGACY_DB_TEMP_CIPHER = "blackvault_local.db.enc.tmp";
     private static final String CIPHER_ALGO = "AES/GCM/NoPadding";
     private static final int GCM_IV_SIZE = 12;
     private static final int GCM_TAG_SIZE = 128;
-    private static Connection connection;
-    private static final Gson gson = new Gson();
-    private static boolean isDbDecrypted = false;
+
+    // Mapa efímero en RAM (solo sesión activa) para asociar ID de semilla con el hash del usuario al eliminar
+    private static final Map<String, String> seedIdToUserHash = new ConcurrentHashMap<>();
+    private static volatile String lastActiveUserHash = null;
 
     public static void init() {
-        try {
-            decryptDatabaseIfNeeded();
-            isDbDecrypted = true;
-            
-            String url = "jdbc:sqlite:" + DB_NAME;
-            connection = DriverManager.getConnection(url);
-            createTables();
-            System.out.println("[v10.0] Base de datos local blindada por HSM.");
-        } catch (Exception e) {
-            System.err.println("[LocalDB] Error crítico: " + e.getMessage());
-            secureDeleteTempFile();
-        }
-    }
-    
-    private static void secureDeleteTempFile() {
-        try {
-            Path dbFile = Paths.get(DB_NAME);
-            if (Files.exists(dbFile)) {
-                Path secureDelete = Paths.get(DB_NAME + ".secure_delete");
-                Files.move(dbFile, secureDelete);
-                Files.deleteIfExists(secureDelete);
-            }
-        } catch (Exception e) {
-            System.err.println("[LocalDB] Advertencia: No se pudo eliminar archivo temporal: " + e.getMessage());
-        }
-    }
-
-    private static void decryptDatabaseIfNeeded() throws Exception {
-        Path cipherFile = Paths.get(DB_CIPHER_NAME);
-        Path dbFile = Paths.get(DB_NAME);
-        
-        if (Files.exists(cipherFile) && !Files.exists(dbFile)) {
-            System.out.println("[LocalDB] Descifrando base de datos desde HSM...");
-            char[] password = SecuritySession.unsealMasterPassword();
-            
-            byte[] cipherData = Files.readAllBytes(cipherFile);
-            if (cipherData.length < GCM_IV_SIZE + GCM_TAG_SIZE / 8) {
-                java.util.Arrays.fill(password, (char) 0);
-                throw new Exception("Archivo cifrado corrupto o inválido.");
-            }
-            
-            final byte[] iv = new byte[GCM_IV_SIZE];
-            final byte[] encryptedData = new byte[cipherData.length - GCM_IV_SIZE];
-            System.arraycopy(cipherData, 0, iv, 0, GCM_IV_SIZE);
-            System.arraycopy(cipherData, GCM_IV_SIZE, encryptedData, 0, encryptedData.length);
-            
-            try {
-                SecretKeySpec key = RSALogica.derivarLlavePBKDF2(password, "Blackpassword_DB_Key_2026".getBytes(StandardCharsets.UTF_8), 600000);
-                Cipher cipher = Cipher.getInstance(CIPHER_ALGO);
-                cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_SIZE, iv));
-                byte[] decrypted = cipher.doFinal(encryptedData);
-                Files.write(Paths.get(DB_NAME), decrypted);
-                java.util.Arrays.fill(decrypted, (byte) 0);
-            } finally {
-                java.util.Arrays.fill(password, (char) 0);
-            }
-            
-            System.out.println("[LocalDB] Base de datos descifrada exitosamente.");
-        } else if (!Files.exists(dbFile)) {
-            Files.createFile(dbFile);
-        }
+        purgeLegacyLocalFiles();
+        System.out.println("[Zero-Disk] Persistencia local deshabilitada: Todos los datos residen exclusivamente en Firebase Cloud.");
     }
 
     public static void closeAndEncrypt() {
-        if (!isDbDecrypted) {
-            return;
-        }
-        
-        try {
-            if (connection != null && !connection.isClosed()) {
-                connection.close();
-                connection = null;
-            }
-            
-            Path dbFile = Paths.get(DB_NAME);
-            if (Files.exists(dbFile)) {
-                char[] password = SecuritySession.unsealMasterPassword();
-                if (password != null) {
-                    Path tempCipherFile = Paths.get(DB_TEMP_CIPHER);
-                    Path finalCipherFile = Paths.get(DB_CIPHER_NAME);
-                    
-                    try {
-                        encryptDatabaseAtomic(dbFile, tempCipherFile, password);
-                        Files.deleteIfExists(finalCipherFile);
-                        Files.move(tempCipherFile, finalCipherFile);
-                        Files.deleteIfExists(dbFile);
-                        System.out.println("[LocalDB] Base de datos cifrada y llave purgada.");
-                    } finally {
-                        java.util.Arrays.fill(password, (char) 0);
-                    }
-                    isDbDecrypted = false;
-                }
-            }
-        } catch (Exception e) {
-            System.err.println("[LocalDB] Error al cifrar base de datos: " + e.getMessage());
-            secureOverwriteAndDelete(Paths.get(DB_NAME));
-        }
+        seedIdToUserHash.clear();
+        lastActiveUserHash = null;
+        purgeLegacyLocalFiles();
     }
-    
-    private static void encryptDatabaseAtomic(Path dbFile, Path tempFile, char[] password) throws Exception {
-        byte[] plainData = Files.readAllBytes(dbFile);
-        byte[] iv = new byte[GCM_IV_SIZE];
-        new SecureRandom().nextBytes(iv);
-        
-        SecretKeySpec key = deriveKeyFromPassword(password);
-        Cipher cipher = Cipher.getInstance(CIPHER_ALGO);
-        cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_SIZE, iv));
-        
-        byte[] encrypted = cipher.doFinal(plainData);
-        java.util.Arrays.fill(plainData, (byte) 0);
-        
-        ByteBuffer output = ByteBuffer.allocate(GCM_IV_SIZE + encrypted.length);
-        output.put(iv);
-        output.put(encrypted);
-        
-        Files.write(tempFile, output.array());
+
+    private static void purgeLegacyLocalFiles() {
+        secureOverwriteAndDelete(Paths.get(LEGACY_DB_NAME));
+        secureOverwriteAndDelete(Paths.get(LEGACY_DB_CIPHER_NAME));
+        secureOverwriteAndDelete(Paths.get(LEGACY_DB_TEMP_CIPHER));
+        secureOverwriteAndDelete(Paths.get(LEGACY_DB_NAME + ".secure_delete"));
     }
-    
+
     private static void secureOverwriteAndDelete(Path file) {
-        if (!Files.exists(file)) {
+        if (file == null || !Files.exists(file)) {
             return;
         }
         try {
@@ -180,223 +74,41 @@ public class LocalDatabaseService {
                 os.flush();
             }
             Files.deleteIfExists(file);
-            System.out.println("[LocalDB] Archivo seguro eliminado.");
         } catch (Exception e) {
-            System.err.println("[LocalDB] Advertencia: No se pudo sobrescribir seguro: " + e.getMessage());
             try {
                 Files.deleteIfExists(file);
-            } catch (Exception ex) {
-                System.err.println("[LocalDB] CRÍTICO: Archivo no pudo ser eliminado: " + file);
-            }
+            } catch (Exception ignored) {}
         }
     }
 
-    private static SecretKeySpec deriveKeyFromPassword(char[] password) throws Exception {
-        byte[] passwordBytes = toBytes(password);
-        try {
-            SecretKeySpec key = RSALogica.derivarLlavePBKDF2(password, "Blackpassword_DB_Key_2026".getBytes(StandardCharsets.UTF_8), 300000);
-            return key;
-        } finally {
-            java.util.Arrays.fill(passwordBytes, (byte) 0);
-        }
-    }
-
-    private static byte[] toBytes(char[] chars) {
-        ByteBuffer bb = StandardCharsets.UTF_8.encode(CharBuffer.wrap(chars));
-        byte[] b = new byte[bb.remaining()];
-        bb.get(b);
-        return b;
-    }
-
-    private static synchronized void ensureConnected() {
-        try {
-            if (connection == null || connection.isClosed()) {
-                init();
-            }
-        } catch (Exception e) {
-            System.err.println("[LocalDB] Error verificando conexion: " + e.getMessage());
-        }
-    }
-
-    private static void createTables() throws Exception {
-        String sqlBoveda = "CREATE TABLE IF NOT EXISTS boveda (" +
-                "id TEXT PRIMARY KEY, " +
-                "u_h TEXT, " +
-                "d_c TEXT, " +
-                "ts INTEGER)";
-
-        String sqlSemillas = "CREATE TABLE IF NOT EXISTS boveda_semillas (" +
-                "id TEXT PRIMARY KEY, " +
-                "u_h TEXT NOT NULL, " +
-                "codigo_wallet TEXT NOT NULL, " +
-                "red TEXT NOT NULL, " +
-                "direccion TEXT, " +
-                "semilla_cifrada TEXT NOT NULL, " +
-                "salt_b64 TEXT NOT NULL, " +
-                "ts INTEGER NOT NULL)";
-
-        String sqlWallets = "CREATE TABLE IF NOT EXISTS boveda_btc_wallets (" +
-                "id TEXT PRIMARY KEY, " +
-                "u_h TEXT NOT NULL, " +
-                "red TEXT NOT NULL, " +
-                "payload_cifrado TEXT NOT NULL, " +
-                "address_book_json TEXT DEFAULT '[]', " +
-                "ts INTEGER NOT NULL)";
-
-        String sqlDogeSemillas = "CREATE TABLE IF NOT EXISTS boveda_doge_semillas (" +
-                "id TEXT PRIMARY KEY, " +
-                "u_h TEXT NOT NULL, " +
-                "codigo_wallet TEXT NOT NULL, " +
-                "red TEXT NOT NULL, " +
-                "direccion TEXT, " +
-                "semilla_cifrada TEXT NOT NULL, " +
-                "salt_b64 TEXT NOT NULL, " +
-                "ts INTEGER NOT NULL)";
-
-        String sqlDogeWallets = "CREATE TABLE IF NOT EXISTS boveda_doge_wallets (" +
-                "id TEXT PRIMARY KEY, " +
-                "u_h TEXT NOT NULL, " +
-                "red TEXT NOT NULL, " +
-                "payload_cifrado TEXT NOT NULL, " +
-                "address_book_json TEXT DEFAULT '[]', " +
-                "ts INTEGER NOT NULL)";
-        
-        try (Statement stmt = connection.createStatement()) {
-            stmt.execute(sqlBoveda);
-            stmt.execute(sqlSemillas);
-            stmt.execute(sqlWallets);
-            stmt.execute(sqlDogeSemillas);
-            stmt.execute(sqlDogeWallets);
-        }
-    }
+    // --- MÉTODOS DE BÓVEDA (DELEGADOS 100% A FIREBASE VÍA VAULTMANAGER) ---
 
     public static boolean savePassword(String email, String service, String username, String password) {
-        if (!SecuritySession.isSessionActive() || !SecuritySession.isIdentityValid(email)) {
-            System.err.println("[LocalDB] Intento de escritura bloqueado: Identidad no validada.");
-            return false;
-        }
-        
-        try {
-            String serviceUpper = service.trim().toUpperCase();
-            
-            // Usar formato prefijado s:|u:|p: consistente con VaultManager
-            String raw = "s:" + serviceUpper + "|u:" + username + "|p:" + password;
-            byte[] rawBytes = raw.getBytes(StandardCharsets.UTF_8);
-            byte[] encryptedBytes = RSALogica.cifrarBytesHibrido(rawBytes, SecuritySession.getPublicKey());
-            String encryptedDataAsBase64 = Base64.getEncoder().encodeToString(encryptedBytes);
-
-            String sql = "INSERT OR REPLACE INTO boveda (id, u_h, d_c, ts) VALUES (?, ?, ?, ?)";
-            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-                pstmt.setString(1, serviceUpper);
-                pstmt.setString(2, RSALogica.hashConstantToHex(email));
-                pstmt.setString(3, encryptedDataAsBase64);
-                pstmt.setLong(4, System.currentTimeMillis());
-                pstmt.executeUpdate();
-                return true;
-            }
-        } catch (Exception e) {
-            System.err.println("[LocalDB] Error al guardar credencial: " + e.getMessage());
-            return false;
-        }
+        // No se guarda nada localmente
+        return true;
     }
 
     public static List<Map<String, Object>> getPasswords(String email) {
-        List<Map<String, Object>> list = new ArrayList<>();
-        
-        if (!SecuritySession.isSessionActive() || !SecuritySession.isIdentityValid(email)) {
-            return list;
-        }
-
-        String sql = "SELECT id, d_c FROM boveda WHERE u_h = ?";
-        try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-            pstmt.setString(1, RSALogica.hashConstantToHex(email));
-            ResultSet rs = pstmt.executeQuery();
-            while (rs.next()) {
-                String service = rs.getString("id");
-                String encryptedData = rs.getString("d_c");
-                Map<String, Object> row = new HashMap<>();
-                
-                try {
-                    // Re-try with proper byte-to-string conversion
-                    byte[] decBytes = RSALogica.descifrarBytesHibrido(Base64.getDecoder().decode(encryptedData), SecuritySession.getPrivateKey());
-                    String raw = new String(decBytes, StandardCharsets.UTF_8);
-                    
-                    String s = service != null ? service : "DESCONOCIDO";
-                    String u = "DESCONOCIDO";
-                    
-                    if (raw.startsWith("{")) {
-                        // Soporte Legacy JSON
-                        Type type = new TypeToken<Map<String, String>>(){}.getType();
-                        Map<String, String> dataMap = gson.fromJson(raw, type);
-                        u = dataMap.getOrDefault("username", "(No disponible)");
-                    } else {
-                        // Nuevo formato prefijado
-                        for (String part : raw.split("\\|")) {
-                            if (part.startsWith("s:")) s = part.substring(2);
-                            if (part.startsWith("u:")) u = part.substring(2);
-                        }
-                    }
-                    
-                    row.put("service", s.toUpperCase());
-                    row.put("username", u);
-                    row.put("encrypted_payload", encryptedData);
-                    list.add(row);
-
-                } catch (Exception e) {
-                    Map<String, Object> fallbackRow = new HashMap<>();
-                    fallbackRow.put("service", service != null ? service.toUpperCase() : "ERROR");
-                    fallbackRow.put("encrypted_payload", encryptedData);
-                    fallbackRow.put("username", "(Error de descifrado)");
-                    list.add(fallbackRow);
-                }
-            }
-        } catch (Exception e) {
-            System.err.println("[LocalDB] Error de lectura: " + e.getMessage());
-        }
-        return list;
+        // Sin base de datos local: retorna lista vacía si Firebase no está disponible
+        return Collections.emptyList();
     }
 
     public static void syncSecret(String id, String email, String dataCifradaB64) {
-        if (!SecuritySession.isSessionActive() || !SecuritySession.isIdentityValid(email)) return;
-        try {
-            String idUpper = id.trim().toUpperCase();
-            String sql = "INSERT OR REPLACE INTO boveda (id, u_h, d_c, ts) VALUES (?, ?, ?, ?)";
-            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-                pstmt.setString(1, idUpper);
-                pstmt.setString(2, RSALogica.hashConstantToHex(email));
-                pstmt.setString(3, dataCifradaB64);
-                pstmt.setLong(4, System.currentTimeMillis());
-                pstmt.executeUpdate();
-            }
-        } catch (Exception e) {
-            System.err.println("[LocalDB] Error en sincronización: " + e.getMessage());
-        }
+        // Zero-Disk: No se sincroniza ningún secreto en disco local
     }
 
     public static void deleteLocalSecret(String id) {
-        String idUpper = id.trim().toUpperCase();
-        String sql = "DELETE FROM boveda WHERE id = ?";
-        try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-            pstmt.setString(1, idUpper);
-            pstmt.executeUpdate();
-        } catch (Exception e) {
-            System.err.println("[LocalDB] Error al eliminar secreto local: " + e.getMessage());
-        }
-    }
-    
-    public static void clearCache(String email) {
-        try {
-            String sql = "DELETE FROM boveda WHERE u_h = ?";
-            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-                pstmt.setString(1, RSALogica.hashConstantToHex(email));
-                pstmt.executeUpdate();
-            }
-        } catch (Exception e) {
-            System.err.println("[LocalDB] Error al limpiar caché: " + e.getMessage());
-        }
+        // Zero-Disk: No existe tabla local que eliminar
     }
 
-    // --- BÓVEDA DE SEMILLAS DE BILLETERAS BITCOIN ---
+    public static void clearCache(String email) {
+        seedIdToUserHash.clear();
+        purgeLegacyLocalFiles();
+    }
+
+    // =====================================================
+    // --- BÓVEDA DE SEMILLAS DE BILLETERAS BITCOIN (CLOUD) ---
+    // =====================================================
 
     public static class BtcSeedEntry {
         public final String id;
@@ -430,7 +142,6 @@ public class LocalDatabaseService {
         if (userEmail == null || codigoWallet == null || fraseSemilla == null || pin == null) {
             return false;
         }
-        ensureConnected();
         try {
             byte[] salt = new byte[16];
             new SecureRandom().nextBytes(salt);
@@ -458,7 +169,7 @@ public class LocalDatabaseService {
                 try {
                     payloadToStore = RSALogica.cifrarBytesHibrido(encryptedPayload, pub);
                 } catch (Exception ex) {
-                    System.err.println("[LocalDB] Nota: Error aplicando envoltura RSA a semilla BTC: " + ex.getMessage());
+                    System.err.println("[CloudSeeds] Nota: Error aplicando envoltura RSA a semilla BTC: " + ex.getMessage());
                 }
             }
 
@@ -466,49 +177,33 @@ public class LocalDatabaseService {
             String saltB64 = Base64.getEncoder().encodeToString(salt);
 
             String userHash = RSALogica.hashConstantToHex(userEmail.trim().toLowerCase());
+            lastActiveUserHash = userHash;
             long now = System.currentTimeMillis();
             String id = "SEED_" + userHash.substring(0, Math.min(8, userHash.length())) + "_" + now;
 
-            String sql = "INSERT OR REPLACE INTO boveda_semillas (id, u_h, codigo_wallet, red, direccion, semilla_cifrada, salt_b64, ts) " +
-                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
-            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-                pstmt.setString(1, id);
-                pstmt.setString(2, userHash);
-                pstmt.setString(3, codigoWallet.trim().toUpperCase());
-                pstmt.setString(4, red.toUpperCase());
-                pstmt.setString(5, direccion != null ? direccion : "");
-                pstmt.setString(6, encB64);
-                pstmt.setString(7, saltB64);
-                pstmt.setLong(8, now);
-                pstmt.executeUpdate();
+            Firestore db = FirebaseService.getFirestore();
+            if (db == null) {
+                return false;
             }
 
-            // Sincronizar en Firebase Firestore (Nube de la aplicación)
-            try {
-                Firestore db = FirebaseService.getFirestore();
-                if (db != null) {
-                    String colUsuarios = RSALogica.hashConstantToHex("usuarios");
-                    String colSemillas = RSALogica.hashConstantToHex("semillas_btc");
-                    Map<String, Object> cloudData = new HashMap<>();
-                    cloudData.put("id", id);
-                    cloudData.put("codigo_wallet", codigoWallet.trim().toUpperCase());
-                    cloudData.put("red", red.toUpperCase());
-                    cloudData.put("direccion", direccion != null ? direccion : "");
-                    cloudData.put("semilla_cifrada", encB64);
-                    cloudData.put("salt_b64", saltB64);
-                    cloudData.put("ts", now);
-                    cloudData.put("fecha_registro", com.google.cloud.Timestamp.now());
+            String colUsuarios = RSALogica.hashConstantToHex("usuarios");
+            String colSemillas = RSALogica.hashConstantToHex("semillas_btc");
+            Map<String, Object> cloudData = new HashMap<>();
+            cloudData.put("id", id);
+            cloudData.put("codigo_wallet", codigoWallet.trim().toUpperCase());
+            cloudData.put("red", red.toUpperCase());
+            cloudData.put("direccion", direccion != null ? direccion : "");
+            cloudData.put("semilla_cifrada", encB64);
+            cloudData.put("salt_b64", saltB64);
+            cloudData.put("ts", now);
+            cloudData.put("fecha_registro", com.google.cloud.Timestamp.now());
 
-                    db.collection(colUsuarios + "/" + userHash + "/" + colSemillas).document(id).set(cloudData);
-                    System.out.println("[LocalDB->Firestore] Semilla sincronizada en Firebase Firestore: " + codigoWallet);
-                }
-            } catch (Throwable t) {
-                System.err.println("[LocalDB->Firestore] Nota: Firebase offline o no conectado, semilla persistida localmente: " + t.getMessage());
-            }
-
+            db.collection(colUsuarios + "/" + userHash + "/" + colSemillas).document(id).set(cloudData).get();
+            seedIdToUserHash.put(id, userHash);
+            System.out.println("[Firestore] Semilla BTC guardada exclusivamente en Firebase Cloud: " + codigoWallet);
             return true;
         } catch (Exception e) {
-            System.err.println("[LocalDB] Error al guardar semilla en boveda: " + e.getMessage());
+            System.err.println("[Firestore] Error al guardar semilla BTC en Firebase: " + e.getMessage());
             return false;
         }
     }
@@ -516,10 +211,9 @@ public class LocalDatabaseService {
     public static List<BtcSeedEntry> obtenerSemillasWallet(String userEmail) {
         List<BtcSeedEntry> list = new ArrayList<>();
         if (userEmail == null || userEmail.isEmpty()) return list;
-        ensureConnected();
         String userHash = RSALogica.hashConstantToHex(userEmail.trim().toLowerCase());
+        lastActiveUserHash = userHash;
 
-        // 1. Sincronizar desde Firebase Cloud Firestore si está disponible
         try {
             Firestore db = FirebaseService.getFirestore();
             if (db != null) {
@@ -538,48 +232,23 @@ public class LocalDatabaseService {
                         Long ts = doc.getLong("ts");
                         if (ts == null) ts = System.currentTimeMillis();
 
-                        String sqlSync = "INSERT OR REPLACE INTO boveda_semillas (id, u_h, codigo_wallet, red, direccion, semilla_cifrada, salt_b64, ts) " +
-                                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
-                        try (PreparedStatement pstmt = connection.prepareStatement(sqlSync)) {
-                            pstmt.setString(1, docId);
-                            pstmt.setString(2, userHash);
-                            pstmt.setString(3, cod != null ? cod : "");
-                            pstmt.setString(4, r != null ? r : "TESTNET");
-                            pstmt.setString(5, dir != null ? dir : "");
-                            pstmt.setString(6, semEnc != null ? semEnc : "");
-                            pstmt.setString(7, saltB != null ? saltB : "");
-                            pstmt.setLong(8, ts);
-                            pstmt.executeUpdate();
-                        }
+                        seedIdToUserHash.put(docId, userHash);
+                        list.add(new BtcSeedEntry(
+                            docId,
+                            userHash,
+                            cod != null ? cod : "",
+                            r != null ? r : "TESTNET",
+                            dir != null ? dir : "",
+                            semEnc != null ? semEnc : "",
+                            saltB != null ? saltB : "",
+                            ts
+                        ));
                     }
+                    list.sort((a, b) -> Long.compare(b.timestamp, a.timestamp));
                 }
             }
         } catch (Throwable t) {
-            System.err.println("[LocalDB->Firestore] Firebase no disponible para semillas, usando datos locales: " + t.getMessage());
-        }
-
-        // 2. Consultar registros consolidados de la BD local
-        try {
-            String sql = "SELECT id, u_h, codigo_wallet, red, direccion, semilla_cifrada, salt_b64, ts FROM boveda_semillas WHERE u_h = ? ORDER BY ts DESC";
-            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-                pstmt.setString(1, userHash);
-                try (ResultSet rs = pstmt.executeQuery()) {
-                    while (rs.next()) {
-                        list.add(new BtcSeedEntry(
-                            rs.getString("id"),
-                            rs.getString("u_h"),
-                            rs.getString("codigo_wallet"),
-                            rs.getString("red"),
-                            rs.getString("direccion"),
-                            rs.getString("semilla_cifrada"),
-                            rs.getString("salt_b64"),
-                            rs.getLong("ts")
-                        ));
-                    }
-                }
-            }
-        } catch (Exception e) {
-            System.err.println("[LocalDB] Error al obtener semillas: " + e.getMessage());
+            System.err.println("[Firestore] Error al obtener semillas BTC desde Firebase: " + t.getMessage());
         }
         return list;
     }
@@ -593,7 +262,6 @@ public class LocalDatabaseService {
 
         byte[] rawData = Base64.getDecoder().decode(entry.semillaCifrada);
 
-        // Si la semilla tiene envoltura RSA-4096, se descifra primero con la llave privada RSA de la sesión
         PrivateKey priv = SecuritySession.getPrivateKey();
         if (priv != null) {
             try {
@@ -621,99 +289,63 @@ public class LocalDatabaseService {
 
     public static boolean eliminarSemillaWallet(String id) {
         if (id == null) return false;
-        ensureConnected();
         try {
-            String uHash = null;
-            String sqlSelect = "SELECT u_h FROM boveda_semillas WHERE id = ?";
-            try (PreparedStatement ps = connection.prepareStatement(sqlSelect)) {
-                ps.setString(1, id);
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (rs.next()) {
-                        uHash = rs.getString("u_h");
-                    }
-                }
-            }
+            String uHash = seedIdToUserHash.getOrDefault(id, lastActiveUserHash);
+            if (uHash == null) return false;
 
-            String sql = "DELETE FROM boveda_semillas WHERE id = ?";
-            int affected = 0;
-            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-                pstmt.setString(1, id);
-                affected = pstmt.executeUpdate();
+            Firestore db = FirebaseService.getFirestore();
+            if (db != null) {
+                String colUsuarios = RSALogica.hashConstantToHex("usuarios");
+                String colSemillas = RSALogica.hashConstantToHex("semillas_btc");
+                db.collection(colUsuarios + "/" + uHash + "/" + colSemillas).document(id).delete().get();
+                seedIdToUserHash.remove(id);
+                System.out.println("[Firestore] Semilla BTC eliminada de Firebase Firestore: " + id);
+                return true;
             }
-
-            // Sincronizar eliminación en Firebase Firestore
-            if (uHash != null) {
-                try {
-                    Firestore db = FirebaseService.getFirestore();
-                    if (db != null) {
-                        String colUsuarios = RSALogica.hashConstantToHex("usuarios");
-                        String colSemillas = RSALogica.hashConstantToHex("semillas_btc");
-                        db.collection(colUsuarios + "/" + uHash + "/" + colSemillas).document(id).delete();
-                        System.out.println("[LocalDB->Firestore] Semilla eliminada en Firebase Firestore: " + id);
-                    }
-                } catch (Throwable t) {
-                    System.err.println("[LocalDB->Firestore] Advertencia: No se pudo eliminar semilla de Firebase: " + t.getMessage());
-                }
-            }
-            return affected > 0;
+            return false;
         } catch (Exception e) {
-            System.err.println("[LocalDB] Error al eliminar semilla: " + e.getMessage());
+            System.err.println("[Firestore] Error al eliminar semilla BTC: " + e.getMessage());
             return false;
         }
     }
 
-    // --- BÓVEDA DE BILLETERAS BITCOIN ACTIVAS ---
+    // --- BÓVEDA DE BILLETERAS BITCOIN ACTIVAS (100% FIREBASE) ---
 
     public static boolean guardarBtcWalletActiva(String userEmail, boolean testnet, String payloadCifradoB64) {
         if (userEmail == null || payloadCifradoB64 == null) return false;
-        ensureConnected();
         try {
-            String uHash = RSALogica.hashConstantToHex(userEmail);
-            String red = testnet ? "TESTNET" : "MAINNET";
-            String id = uHash + "_" + red.toLowerCase();
-
-            String sql = "INSERT INTO boveda_btc_wallets (id, u_h, red, payload_cifrado, address_book_json, ts) " +
-                         "VALUES (?, ?, ?, ?, COALESCE((SELECT address_book_json FROM boveda_btc_wallets WHERE id = ?), '[]'), ?) " +
-                         "ON CONFLICT(id) DO UPDATE SET " +
-                         "payload_cifrado = excluded.payload_cifrado, " +
-                         "ts = excluded.ts";
-
-            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-                pstmt.setString(1, id);
-                pstmt.setString(2, uHash);
-                pstmt.setString(3, red);
-                pstmt.setString(4, payloadCifradoB64);
-                pstmt.setString(5, id);
-                pstmt.setLong(6, System.currentTimeMillis());
-                pstmt.executeUpdate();
+            Firestore db = FirebaseService.getFirestore();
+            if (db != null) {
+                String path = BitcoinWalletService.getBtcFirestorePath(userEmail);
+                String docId = testnet ? "testnet" : "mainnet";
+                Map<String, Object> cloudData = new HashMap<>();
+                cloudData.put("payload_cifrado", payloadCifradoB64);
+                cloudData.put("red", testnet ? "TESTNET" : "MAINNET");
+                cloudData.put("fecha_actualizacion", com.google.cloud.Timestamp.now());
+                db.collection(path).document(docId).set(cloudData, SetOptions.merge()).get();
                 return true;
             }
         } catch (Exception e) {
-            System.err.println("[LocalDB] Error guardando wallet activa: " + e.getMessage());
-            return false;
+            System.err.println("[Firestore] Error guardando wallet BTC activa en Firebase: " + e.getMessage());
         }
+        return false;
     }
 
     public static String obtenerBtcWalletActiva(String userEmail, boolean testnet) {
         if (userEmail == null || userEmail.isEmpty()) return null;
-        ensureConnected();
         try {
-            String uHash = RSALogica.hashConstantToHex(userEmail);
-            String red = testnet ? "TESTNET" : "MAINNET";
-            String id = uHash + "_" + red.toLowerCase();
-
-            String sql = "SELECT payload_cifrado FROM boveda_btc_wallets WHERE id = ?";
-            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-                pstmt.setString(1, id);
-                try (ResultSet rs = pstmt.executeQuery()) {
-                    if (rs.next()) {
-                        String payload = rs.getString("payload_cifrado");
-                        return (payload != null && !payload.isEmpty()) ? payload : null;
-                    }
+            Firestore db = FirebaseService.getFirestore();
+            if (db != null) {
+                String path = BitcoinWalletService.getBtcFirestorePath(userEmail);
+                String docId = testnet ? "testnet" : "mainnet";
+                var docSnap = db.collection(path).document(docId).get().get();
+                if (docSnap.exists() && docSnap.contains("payload_cifrado")) {
+                    String payload = docSnap.getString("payload_cifrado");
+                    return (payload != null && !payload.isEmpty()) ? payload : null;
                 }
             }
         } catch (Exception e) {
-            System.err.println("[LocalDB] Error obteniendo wallet activa: " + e.getMessage());
+            System.err.println("[Firestore] Error obteniendo wallet BTC activa desde Firebase: " + e.getMessage());
         }
         return null;
     }
@@ -725,77 +357,59 @@ public class LocalDatabaseService {
 
     public static boolean eliminarBtcWalletActiva(String userEmail, boolean testnet) {
         if (userEmail == null || userEmail.isEmpty()) return false;
-        ensureConnected();
         try {
-            String uHash = RSALogica.hashConstantToHex(userEmail);
-            String red = testnet ? "TESTNET" : "MAINNET";
-            String id = uHash + "_" + red.toLowerCase();
-
-            String sql = "DELETE FROM boveda_btc_wallets WHERE id = ?";
-            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-                pstmt.setString(1, id);
-                return pstmt.executeUpdate() > 0;
+            Firestore db = FirebaseService.getFirestore();
+            if (db != null) {
+                String path = BitcoinWalletService.getBtcFirestorePath(userEmail);
+                String docId = testnet ? "testnet" : "mainnet";
+                db.collection(path).document(docId).delete().get();
+                return true;
             }
         } catch (Exception e) {
-            System.err.println("[LocalDB] Error eliminando wallet activa: " + e.getMessage());
-            return false;
+            System.err.println("[Firestore] Error eliminando wallet BTC activa en Firebase: " + e.getMessage());
         }
+        return false;
     }
 
     public static String obtenerBtcAddressBook(String userEmail, boolean testnet) {
         if (userEmail == null || userEmail.isEmpty()) return "[]";
-        ensureConnected();
         try {
-            String uHash = RSALogica.hashConstantToHex(userEmail);
-            String red = testnet ? "TESTNET" : "MAINNET";
-            String id = uHash + "_" + red.toLowerCase();
-
-            String sql = "SELECT address_book_json FROM boveda_btc_wallets WHERE id = ?";
-            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-                pstmt.setString(1, id);
-                try (ResultSet rs = pstmt.executeQuery()) {
-                    if (rs.next()) {
-                        String json = rs.getString("address_book_json");
-                        return (json != null && !json.isEmpty()) ? json : "[]";
-                    }
+            Firestore db = FirebaseService.getFirestore();
+            if (db != null) {
+                String path = BitcoinWalletService.getBtcFirestorePath(userEmail);
+                String docId = testnet ? "testnet" : "mainnet";
+                var docSnap = db.collection(path).document(docId).get().get();
+                if (docSnap.exists() && docSnap.contains("address_book_json")) {
+                    String json = docSnap.getString("address_book_json");
+                    return (json != null && !json.isEmpty()) ? json : "[]";
                 }
             }
         } catch (Exception e) {
-            System.err.println("[LocalDB] Error obteniendo libreta de direcciones: " + e.getMessage());
+            System.err.println("[Firestore] Error obteniendo libreta BTC desde Firebase: " + e.getMessage());
         }
         return "[]";
     }
 
     public static void guardarBtcAddressBook(String userEmail, boolean testnet, String addressBookJson) {
         if (userEmail == null || userEmail.isEmpty()) return;
-        ensureConnected();
         try {
-            String uHash = RSALogica.hashConstantToHex(userEmail);
-            String red = testnet ? "TESTNET" : "MAINNET";
-            String id = uHash + "_" + red.toLowerCase();
-
-            String sql = "INSERT INTO boveda_btc_wallets (id, u_h, red, payload_cifrado, address_book_json, ts) " +
-                         "VALUES (?, ?, ?, '', ?, ?) " +
-                         "ON CONFLICT(id) DO UPDATE SET " +
-                         "address_book_json = excluded.address_book_json, " +
-                         "ts = excluded.ts";
-
-            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-                pstmt.setString(1, id);
-                pstmt.setString(2, uHash);
-                pstmt.setString(3, red);
-                pstmt.setString(4, addressBookJson != null ? addressBookJson : "[]");
-                pstmt.setLong(5, System.currentTimeMillis());
-                pstmt.executeUpdate();
+            Firestore db = FirebaseService.getFirestore();
+            if (db != null) {
+                String path = BitcoinWalletService.getBtcFirestorePath(userEmail);
+                String docId = testnet ? "testnet" : "mainnet";
+                Map<String, Object> updateMap = new HashMap<>();
+                updateMap.put("address_book_json", addressBookJson != null ? addressBookJson : "[]");
+                updateMap.put("fecha_actualizacion", com.google.cloud.Timestamp.now());
+                db.collection(path).document(docId).set(updateMap, SetOptions.merge()).get();
             }
         } catch (Exception e) {
-            System.err.println("[LocalDB] Error guardando libreta de direcciones: " + e.getMessage());
+            System.err.println("[Firestore] Error guardando libreta BTC en Firebase: " + e.getMessage());
         }
     }
 
-    // ==========================================
-    // --- BÓVEDA DE SEMILLAS DOGECOIN (BIP-44) ---
-    // ==========================================
+    // =======================================================
+    // --- BÓVEDA DE SEMILLAS DOGECOIN (BIP-44, 100% CLOUD) ---
+    // =======================================================
 
     public static class DogeSeedEntry {
         public final String id;
@@ -829,7 +443,6 @@ public class LocalDatabaseService {
         if (userEmail == null || codigoWallet == null || fraseSemilla == null || pin == null) {
             return false;
         }
-        ensureConnected();
         try {
             byte[] salt = new byte[16];
             new SecureRandom().nextBytes(salt);
@@ -857,7 +470,7 @@ public class LocalDatabaseService {
                 try {
                     payloadToStore = RSALogica.cifrarBytesHibrido(encryptedPayload, pub);
                 } catch (Exception ex) {
-                    System.err.println("[LocalDB] Nota: Error aplicando envoltura RSA a semilla Doge: " + ex.getMessage());
+                    System.err.println("[CloudSeeds] Nota: Error aplicando envoltura RSA a semilla Doge: " + ex.getMessage());
                 }
             }
 
@@ -865,49 +478,33 @@ public class LocalDatabaseService {
             String saltB64 = Base64.getEncoder().encodeToString(salt);
 
             String userHash = RSALogica.hashConstantToHex(userEmail.trim().toLowerCase());
+            lastActiveUserHash = userHash;
             long now = System.currentTimeMillis();
             String id = "DOGE_SEED_" + userHash.substring(0, Math.min(8, userHash.length())) + "_" + now;
 
-            String sql = "INSERT OR REPLACE INTO boveda_doge_semillas (id, u_h, codigo_wallet, red, direccion, semilla_cifrada, salt_b64, ts) " +
-                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
-            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-                pstmt.setString(1, id);
-                pstmt.setString(2, userHash);
-                pstmt.setString(3, codigoWallet.trim().toUpperCase());
-                pstmt.setString(4, red.toUpperCase());
-                pstmt.setString(5, direccion != null ? direccion : "");
-                pstmt.setString(6, encB64);
-                pstmt.setString(7, saltB64);
-                pstmt.setLong(8, now);
-                pstmt.executeUpdate();
+            Firestore db = FirebaseService.getFirestore();
+            if (db == null) {
+                return false;
             }
 
-            // Sincronizar en Firebase Firestore (Nube)
-            try {
-                Firestore db = FirebaseService.getFirestore();
-                if (db != null) {
-                    String colUsuarios = RSALogica.hashConstantToHex("usuarios");
-                    String colSemillas = RSALogica.hashConstantToHex("semillas_doge");
-                    Map<String, Object> cloudData = new HashMap<>();
-                    cloudData.put("id", id);
-                    cloudData.put("codigo_wallet", codigoWallet.trim().toUpperCase());
-                    cloudData.put("red", red.toUpperCase());
-                    cloudData.put("direccion", direccion != null ? direccion : "");
-                    cloudData.put("semilla_cifrada", encB64);
-                    cloudData.put("salt_b64", saltB64);
-                    cloudData.put("ts", now);
-                    cloudData.put("fecha_registro", com.google.cloud.Timestamp.now());
+            String colUsuarios = RSALogica.hashConstantToHex("usuarios");
+            String colSemillas = RSALogica.hashConstantToHex("semillas_doge");
+            Map<String, Object> cloudData = new HashMap<>();
+            cloudData.put("id", id);
+            cloudData.put("codigo_wallet", codigoWallet.trim().toUpperCase());
+            cloudData.put("red", red.toUpperCase());
+            cloudData.put("direccion", direccion != null ? direccion : "");
+            cloudData.put("semilla_cifrada", encB64);
+            cloudData.put("salt_b64", saltB64);
+            cloudData.put("ts", now);
+            cloudData.put("fecha_registro", com.google.cloud.Timestamp.now());
 
-                    db.collection(colUsuarios + "/" + userHash + "/" + colSemillas).document(id).set(cloudData);
-                    System.out.println("[LocalDB->Firestore] Semilla Dogecoin sincronizada en Firebase Firestore: " + codigoWallet);
-                }
-            } catch (Throwable t) {
-                System.err.println("[LocalDB->Firestore] Nota: Firebase offline, semilla Doge persistida localmente: " + t.getMessage());
-            }
-
+            db.collection(colUsuarios + "/" + userHash + "/" + colSemillas).document(id).set(cloudData).get();
+            seedIdToUserHash.put(id, userHash);
+            System.out.println("[Firestore] Semilla Dogecoin guardada exclusivamente en Firebase Cloud: " + codigoWallet);
             return true;
         } catch (Exception e) {
-            System.err.println("[LocalDB] Error al guardar semilla Doge en boveda: " + e.getMessage());
+            System.err.println("[Firestore] Error al guardar semilla Doge en Firebase: " + e.getMessage());
             return false;
         }
     }
@@ -915,10 +512,9 @@ public class LocalDatabaseService {
     public static List<DogeSeedEntry> obtenerSemillasDogeWallet(String userEmail) {
         List<DogeSeedEntry> list = new ArrayList<>();
         if (userEmail == null || userEmail.isEmpty()) return list;
-        ensureConnected();
         String userHash = RSALogica.hashConstantToHex(userEmail.trim().toLowerCase());
+        lastActiveUserHash = userHash;
 
-        // 1. Sincronizar desde Firebase Cloud Firestore si está disponible
         try {
             Firestore db = FirebaseService.getFirestore();
             if (db != null) {
@@ -937,48 +533,23 @@ public class LocalDatabaseService {
                         Long ts = doc.getLong("ts");
                         if (ts == null) ts = System.currentTimeMillis();
 
-                        String sqlSync = "INSERT OR REPLACE INTO boveda_doge_semillas (id, u_h, codigo_wallet, red, direccion, semilla_cifrada, salt_b64, ts) " +
-                                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
-                        try (PreparedStatement pstmt = connection.prepareStatement(sqlSync)) {
-                            pstmt.setString(1, docId);
-                            pstmt.setString(2, userHash);
-                            pstmt.setString(3, cod != null ? cod : "");
-                            pstmt.setString(4, r != null ? r : "MAINNET");
-                            pstmt.setString(5, dir != null ? dir : "");
-                            pstmt.setString(6, semEnc != null ? semEnc : "");
-                            pstmt.setString(7, saltB != null ? saltB : "");
-                            pstmt.setLong(8, ts);
-                            pstmt.executeUpdate();
-                        }
+                        seedIdToUserHash.put(docId, userHash);
+                        list.add(new DogeSeedEntry(
+                            docId,
+                            userHash,
+                            cod != null ? cod : "",
+                            r != null ? r : "MAINNET",
+                            dir != null ? dir : "",
+                            semEnc != null ? semEnc : "",
+                            saltB != null ? saltB : "",
+                            ts
+                        ));
                     }
+                    list.sort((a, b) -> Long.compare(b.timestamp, a.timestamp));
                 }
             }
         } catch (Throwable t) {
-            System.err.println("[LocalDB->Firestore] Firebase no disponible para semillas Doge, usando datos locales: " + t.getMessage());
-        }
-
-        // 2. Consultar registros consolidados de la BD local
-        try {
-            String sql = "SELECT id, u_h, codigo_wallet, red, direccion, semilla_cifrada, salt_b64, ts FROM boveda_doge_semillas WHERE u_h = ? ORDER BY ts DESC";
-            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-                pstmt.setString(1, userHash);
-                try (ResultSet rs = pstmt.executeQuery()) {
-                    while (rs.next()) {
-                        list.add(new DogeSeedEntry(
-                            rs.getString("id"),
-                            rs.getString("u_h"),
-                            rs.getString("codigo_wallet"),
-                            rs.getString("red"),
-                            rs.getString("direccion"),
-                            rs.getString("semilla_cifrada"),
-                            rs.getString("salt_b64"),
-                            rs.getLong("ts")
-                        ));
-                    }
-                }
-            }
-        } catch (Exception e) {
-            System.err.println("[LocalDB] Error al obtener semillas Doge: " + e.getMessage());
+            System.err.println("[Firestore] Error al obtener semillas Doge desde Firebase: " + t.getMessage());
         }
         return list;
     }
@@ -992,7 +563,6 @@ public class LocalDatabaseService {
 
         byte[] rawData = Base64.getDecoder().decode(entry.semillaCifrada);
 
-        // Si la semilla tiene envoltura RSA-4096, se descifra primero con la llave privada RSA de la sesión
         PrivateKey priv = SecuritySession.getPrivateKey();
         if (priv != null) {
             try {
@@ -1020,101 +590,63 @@ public class LocalDatabaseService {
 
     public static boolean eliminarSemillaDogeWallet(String id) {
         if (id == null) return false;
-        ensureConnected();
         try {
-            String uHash = null;
-            String sqlSelect = "SELECT u_h FROM boveda_doge_semillas WHERE id = ?";
-            try (PreparedStatement ps = connection.prepareStatement(sqlSelect)) {
-                ps.setString(1, id);
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (rs.next()) {
-                        uHash = rs.getString("u_h");
-                    }
-                }
-            }
+            String uHash = seedIdToUserHash.getOrDefault(id, lastActiveUserHash);
+            if (uHash == null) return false;
 
-            String sql = "DELETE FROM boveda_doge_semillas WHERE id = ?";
-            int affected = 0;
-            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-                pstmt.setString(1, id);
-                affected = pstmt.executeUpdate();
+            Firestore db = FirebaseService.getFirestore();
+            if (db != null) {
+                String colUsuarios = RSALogica.hashConstantToHex("usuarios");
+                String colSemillas = RSALogica.hashConstantToHex("semillas_doge");
+                db.collection(colUsuarios + "/" + uHash + "/" + colSemillas).document(id).delete().get();
+                seedIdToUserHash.remove(id);
+                System.out.println("[Firestore] Semilla Doge eliminada en Firebase Firestore: " + id);
+                return true;
             }
-
-            // Sincronizar eliminación en Firebase Firestore
-            if (uHash != null) {
-                try {
-                    Firestore db = FirebaseService.getFirestore();
-                    if (db != null) {
-                        String colUsuarios = RSALogica.hashConstantToHex("usuarios");
-                        String colSemillas = RSALogica.hashConstantToHex("semillas_doge");
-                        db.collection(colUsuarios + "/" + uHash + "/" + colSemillas).document(id).delete();
-                        System.out.println("[LocalDB->Firestore] Semilla Doge eliminada en Firebase Firestore: " + id);
-                    }
-                } catch (Throwable t) {
-                    System.err.println("[LocalDB->Firestore] Advertencia: No se pudo eliminar semilla Doge de Firebase: " + t.getMessage());
-                }
-            }
-            return affected > 0;
+            return false;
         } catch (Exception e) {
-            System.err.println("[LocalDB] Error al eliminar semilla Doge: " + e.getMessage());
+            System.err.println("[Firestore] Error al eliminar semilla Doge: " + e.getMessage());
             return false;
         }
     }
 
-    // ==============================================
-    // --- BÓVEDA DE BILLETERAS DOGECOIN ACTIVAS ---
-    // ==============================================
+    // --- BÓVEDA DE BILLETERAS DOGECOIN ACTIVAS (100% FIREBASE) ---
 
     public static boolean guardarDogeWalletActiva(String userEmail, boolean testnet, String payloadCifradoB64) {
         if (userEmail == null || payloadCifradoB64 == null) return false;
-        ensureConnected();
         try {
-            String uHash = RSALogica.hashConstantToHex(userEmail);
-            String red = testnet ? "TESTNET" : "MAINNET";
-            String id = uHash + "_" + red.toLowerCase();
-
-            String sql = "INSERT INTO boveda_doge_wallets (id, u_h, red, payload_cifrado, address_book_json, ts) " +
-                         "VALUES (?, ?, ?, ?, COALESCE((SELECT address_book_json FROM boveda_doge_wallets WHERE id = ?), '[]'), ?) " +
-                         "ON CONFLICT(id) DO UPDATE SET " +
-                         "payload_cifrado = excluded.payload_cifrado, " +
-                         "ts = excluded.ts";
-
-            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-                pstmt.setString(1, id);
-                pstmt.setString(2, uHash);
-                pstmt.setString(3, red);
-                pstmt.setString(4, payloadCifradoB64);
-                pstmt.setString(5, id);
-                pstmt.setLong(6, System.currentTimeMillis());
-                pstmt.executeUpdate();
+            Firestore db = FirebaseService.getFirestore();
+            if (db != null) {
+                String path = DogecoinWalletService.getDogeFirestorePath(userEmail);
+                String docId = testnet ? "testnet" : "mainnet";
+                Map<String, Object> cloudData = new HashMap<>();
+                cloudData.put("payload_cifrado", payloadCifradoB64);
+                cloudData.put("red", testnet ? "TESTNET" : "MAINNET");
+                cloudData.put("fecha_actualizacion", com.google.cloud.Timestamp.now());
+                db.collection(path).document(docId).set(cloudData, SetOptions.merge()).get();
                 return true;
             }
         } catch (Exception e) {
-            System.err.println("[LocalDB] Error guardando wallet Doge activa: " + e.getMessage());
-            return false;
+            System.err.println("[Firestore] Error guardando wallet Doge activa en Firebase: " + e.getMessage());
         }
+        return false;
     }
 
     public static String obtenerDogeWalletActiva(String userEmail, boolean testnet) {
         if (userEmail == null || userEmail.isEmpty()) return null;
-        ensureConnected();
         try {
-            String uHash = RSALogica.hashConstantToHex(userEmail);
-            String red = testnet ? "TESTNET" : "MAINNET";
-            String id = uHash + "_" + red.toLowerCase();
-
-            String sql = "SELECT payload_cifrado FROM boveda_doge_wallets WHERE id = ?";
-            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-                pstmt.setString(1, id);
-                try (ResultSet rs = pstmt.executeQuery()) {
-                    if (rs.next()) {
-                        String payload = rs.getString("payload_cifrado");
-                        return (payload != null && !payload.isEmpty()) ? payload : null;
-                    }
+            Firestore db = FirebaseService.getFirestore();
+            if (db != null) {
+                String path = DogecoinWalletService.getDogeFirestorePath(userEmail);
+                String docId = testnet ? "testnet" : "mainnet";
+                var docSnap = db.collection(path).document(docId).get().get();
+                if (docSnap.exists() && docSnap.contains("payload_cifrado")) {
+                    String payload = docSnap.getString("payload_cifrado");
+                    return (payload != null && !payload.isEmpty()) ? payload : null;
                 }
             }
         } catch (Exception e) {
-            System.err.println("[LocalDB] Error obteniendo wallet Doge activa: " + e.getMessage());
+            System.err.println("[Firestore] Error obteniendo wallet Doge activa desde Firebase: " + e.getMessage());
         }
         return null;
     }
@@ -1126,72 +658,53 @@ public class LocalDatabaseService {
 
     public static boolean eliminarDogeWalletActiva(String userEmail, boolean testnet) {
         if (userEmail == null || userEmail.isEmpty()) return false;
-        ensureConnected();
         try {
-            String uHash = RSALogica.hashConstantToHex(userEmail);
-            String red = testnet ? "TESTNET" : "MAINNET";
-            String id = uHash + "_" + red.toLowerCase();
-
-            String sql = "DELETE FROM boveda_doge_wallets WHERE id = ?";
-            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-                pstmt.setString(1, id);
-                return pstmt.executeUpdate() > 0;
+            Firestore db = FirebaseService.getFirestore();
+            if (db != null) {
+                String path = DogecoinWalletService.getDogeFirestorePath(userEmail);
+                String docId = testnet ? "testnet" : "mainnet";
+                db.collection(path).document(docId).delete().get();
+                return true;
             }
         } catch (Exception e) {
-            System.err.println("[LocalDB] Error eliminando wallet Doge activa: " + e.getMessage());
-            return false;
+            System.err.println("[Firestore] Error eliminando wallet Doge activa en Firebase: " + e.getMessage());
         }
+        return false;
     }
 
     public static String obtenerDogeAddressBook(String userEmail, boolean testnet) {
         if (userEmail == null || userEmail.isEmpty()) return "[]";
-        ensureConnected();
         try {
-            String uHash = RSALogica.hashConstantToHex(userEmail);
-            String red = testnet ? "TESTNET" : "MAINNET";
-            String id = uHash + "_" + red.toLowerCase();
-
-            String sql = "SELECT address_book_json FROM boveda_doge_wallets WHERE id = ?";
-            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-                pstmt.setString(1, id);
-                try (ResultSet rs = pstmt.executeQuery()) {
-                    if (rs.next()) {
-                        String json = rs.getString("address_book_json");
-                        return (json != null && !json.isEmpty()) ? json : "[]";
-                    }
+            Firestore db = FirebaseService.getFirestore();
+            if (db != null) {
+                String path = DogecoinWalletService.getDogeFirestorePath(userEmail);
+                String docId = testnet ? "testnet" : "mainnet";
+                var docSnap = db.collection(path).document(docId).get().get();
+                if (docSnap.exists() && docSnap.contains("address_book_json")) {
+                    String json = docSnap.getString("address_book_json");
+                    return (json != null && !json.isEmpty()) ? json : "[]";
                 }
             }
         } catch (Exception e) {
-            System.err.println("[LocalDB] Error obteniendo libreta Doge: " + e.getMessage());
+            System.err.println("[Firestore] Error obteniendo libreta Doge desde Firebase: " + e.getMessage());
         }
         return "[]";
     }
 
     public static void guardarDogeAddressBook(String userEmail, boolean testnet, String addressBookJson) {
         if (userEmail == null || userEmail.isEmpty()) return;
-        ensureConnected();
         try {
-            String uHash = RSALogica.hashConstantToHex(userEmail);
-            String red = testnet ? "TESTNET" : "MAINNET";
-            String id = uHash + "_" + red.toLowerCase();
-
-            String sql = "INSERT INTO boveda_doge_wallets (id, u_h, red, payload_cifrado, address_book_json, ts) " +
-                         "VALUES (?, ?, ?, '', ?, ?) " +
-                         "ON CONFLICT(id) DO UPDATE SET " +
-                         "address_book_json = excluded.address_book_json, " +
-                         "ts = excluded.ts";
-
-            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-                pstmt.setString(1, id);
-                pstmt.setString(2, uHash);
-                pstmt.setString(3, red);
-                pstmt.setString(4, addressBookJson != null ? addressBookJson : "[]");
-                pstmt.setLong(5, System.currentTimeMillis());
-                pstmt.executeUpdate();
+            Firestore db = FirebaseService.getFirestore();
+            if (db != null) {
+                String path = DogecoinWalletService.getDogeFirestorePath(userEmail);
+                String docId = testnet ? "testnet" : "mainnet";
+                Map<String, Object> updateMap = new HashMap<>();
+                updateMap.put("address_book_json", addressBookJson != null ? addressBookJson : "[]");
+                updateMap.put("fecha_actualizacion", com.google.cloud.Timestamp.now());
+                db.collection(path).document(docId).set(updateMap, SetOptions.merge()).get();
             }
         } catch (Exception e) {
-            System.err.println("[LocalDB] Error guardando libreta Doge: " + e.getMessage());
+            System.err.println("[Firestore] Error guardando libreta Doge en Firebase: " + e.getMessage());
         }
     }
 }
-

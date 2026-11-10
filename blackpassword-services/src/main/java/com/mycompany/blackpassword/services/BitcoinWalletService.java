@@ -261,43 +261,38 @@ public class BitcoinWalletService {
 
         String encoded = java.util.Base64.getEncoder().encodeToString(finalPayload);
 
-        // 1. Guardar en Base de Datos Local SQLite como réplica y caché local
-        LocalDatabaseService.guardarBtcWalletActiva(userEmail, testnet, encoded);
-
-        // 2. Guardar y sincronizar en Firebase Cloud Firestore (Nube de la aplicación)
+        // Guardar exclusivamente en Firebase Cloud Firestore (Zero-Disk)
         try {
             Firestore db = FirebaseService.getFirestore();
             if (db != null) {
                 String path = getBtcFirestorePath(userEmail);
                 String docId = testnet ? "testnet" : "mainnet";
-                String currentAddressBook = LocalDatabaseService.obtenerBtcAddressBook(userEmail, testnet);
 
                 Map<String, Object> cloudData = new HashMap<>();
                 cloudData.put("payload_cifrado", encoded);
                 cloudData.put("red", testnet ? "TESTNET" : "MAINNET");
                 cloudData.put("fecha_actualizacion", com.google.cloud.Timestamp.now());
-                cloudData.put("address_book_json", currentAddressBook != null ? currentAddressBook : "[]");
 
-                db.collection(path).document(docId).set(cloudData).get();
+                db.collection(path).document(docId).set(cloudData, SetOptions.merge()).get();
                 System.out.println("[BitcoinWalletService] Billetera cifrada guardada en Firebase Cloud Firestore (" + (testnet ? "TESTNET" : "MAINNET") + ")");
             }
         } catch (Throwable t) {
-            System.err.println("[BitcoinWalletService] Advertencia al sincronizar en Firebase (offline/local): " + t.getMessage());
+            System.err.println("[BitcoinWalletService] Error al guardar en Firebase Cloud: " + t.getMessage());
         }
 
-        // 3. Limpiar permanentemente cualquier clave residual en el Registro del SO
+        // Limpiar permanentemente cualquier clave residual en el Registro del SO
         limpiarRegistroResidual(userEmail, testnet);
     }
 
     /**
-     * Carga y descifra la billetera del usuario desde Firebase Cloud Firestore (o réplica local)
+     * Carga y descifra la billetera del usuario exclusivamente desde Firebase Cloud Firestore
      */
     public static Wallet cargarBilleteraCifrada(String userEmail, char[] pin, boolean testnet) throws Exception {
         String key = getWalletKey(userEmail, testnet);
         String encoded = null;
         boolean migratedFromRegistry = false;
 
-        // 1. Intentar cargar prioritariamente desde Firebase Cloud Firestore
+        // 1. Cargar desde Firebase Cloud Firestore
         try {
             Firestore db = FirebaseService.getFirestore();
             if (db != null) {
@@ -308,23 +303,12 @@ public class BitcoinWalletService {
                     String cloudPayload = docSnap.getString("payload_cifrado");
                     if (cloudPayload != null && !cloudPayload.isEmpty()) {
                         encoded = cloudPayload;
-                        // Sincronizar en caché local SQLite
-                        LocalDatabaseService.guardarBtcWalletActiva(userEmail, testnet, cloudPayload);
-                        String cloudAddrBook = docSnap.getString("address_book_json");
-                        if (cloudAddrBook != null && !cloudAddrBook.isEmpty()) {
-                            LocalDatabaseService.guardarBtcAddressBook(userEmail, testnet, cloudAddrBook);
-                        }
                         System.out.println("[BitcoinWalletService] Billetera cargada directamente desde Firebase Cloud Firestore.");
                     }
                 }
             }
         } catch (Throwable t) {
-            System.err.println("[BitcoinWalletService] Firebase no disponible, usando respaldo en base de datos local: " + t.getMessage());
-        }
-
-        // 2. Cargar desde la Base de Datos Local SQLite si no se obtuvo de la nube
-        if (encoded == null || encoded.isEmpty()) {
-            encoded = LocalDatabaseService.obtenerBtcWalletActiva(userEmail, testnet);
+            System.err.println("[BitcoinWalletService] Error conectando con Firebase Cloud: " + t.getMessage());
         }
 
         // 3. Fallback de migración automática si aún residía en el Registro de Windows

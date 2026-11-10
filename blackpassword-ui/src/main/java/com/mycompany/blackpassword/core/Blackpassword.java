@@ -65,8 +65,12 @@ public class Blackpassword {
     public static void main(String[] args) {
         // 0. CAPA DE SEGURIDAD HSM: REGISTRO DE AUTO-DESTRUCCIÓN
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            System.out.println("[HSM] 🛡️ Cierre detectado. Iniciando incineración de llaves físicas...");
+            System.out.println("[HSM] 🛡️ Cierre detectado. Cifrando base de datos local e incinerando llaves físicas...");
+            try {
+                com.mycompany.blackpassword.services.LocalDatabaseService.closeAndEncrypt();
+            } catch (Exception ignored) {}
             com.mycompany.blackpassword.services.hsm.KeyAnchorService.getInstance().destroyAll();
+            com.mycompany.blackpassword.services.SecuritySession.clear();
         }));
 
         // REGISTRO DE NOTIFICACIONES (Audit -> UI)

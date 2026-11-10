@@ -1563,8 +1563,20 @@ public class BilleteraDogecoin extends JInternalFrame {
         JButton btnCopy = new JButton("📋 COPIAR");
         btnCopy.putClientProperty(FlatClientProperties.STYLE, "arc: 10; font: bold 12; margin: 6,14,6,14");
         btnCopy.addActionListener(e -> {
-            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(String.join(" ", palabras)), null);
-            ToastNotification.show(dlg, "Palabras copiadas al portapapeles.", ToastNotification.Type.SUCCESS);
+            String seedStr = String.join(" ", palabras);
+            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(seedStr), null);
+            ToastNotification.show(dlg, "Palabras copiadas al portapapeles (expira en 30s).", ToastNotification.Type.SUCCESS);
+            javax.swing.Timer purgeTimer = new javax.swing.Timer(30000, evt -> {
+                try {
+                    java.awt.datatransfer.Clipboard clip = Toolkit.getDefaultToolkit().getSystemClipboard();
+                    if (clip.isDataFlavorAvailable(java.awt.datatransfer.DataFlavor.stringFlavor)) {
+                        String cur = (String) clip.getData(java.awt.datatransfer.DataFlavor.stringFlavor);
+                        if (seedStr.equals(cur)) clip.setContents(new StringSelection(""), null);
+                    }
+                } catch (Exception ignored) {}
+            });
+            purgeTimer.setRepeats(false);
+            purgeTimer.start();
         });
         bottom.add(btnCopy);
 

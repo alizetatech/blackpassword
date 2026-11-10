@@ -272,39 +272,34 @@ public class DogecoinWalletService {
 
         String encoded = java.util.Base64.getEncoder().encodeToString(finalPayload);
 
-        // 1. Guardar en Base de Datos Local SQLite como respaldo
-        LocalDatabaseService.guardarDogeWalletActiva(userEmail, testnet, encoded);
-
-        // 2. Guardar y sincronizar en Firebase Cloud Firestore
+        // Guardar exclusivamente en Firebase Cloud Firestore (Zero-Disk)
         try {
             Firestore db = FirebaseService.getFirestore();
             if (db != null) {
                 String path = getDogeFirestorePath(userEmail);
                 String docId = testnet ? "testnet" : "mainnet";
-                String currentAddressBook = LocalDatabaseService.obtenerDogeAddressBook(userEmail, testnet);
 
                 Map<String, Object> cloudData = new HashMap<>();
                 cloudData.put("payload_cifrado", encoded);
                 cloudData.put("red", testnet ? "TESTNET" : "MAINNET");
                 cloudData.put("fecha_actualizacion", com.google.cloud.Timestamp.now());
-                cloudData.put("address_book_json", currentAddressBook != null ? currentAddressBook : "[]");
 
-                db.collection(path).document(docId).set(cloudData).get();
+                db.collection(path).document(docId).set(cloudData, SetOptions.merge()).get();
                 System.out.println("[DogecoinWalletService] Billetera Doge guardada en Firebase Cloud Firestore (" + (testnet ? "TESTNET" : "MAINNET") + ")");
             }
         } catch (Throwable t) {
-            System.err.println("[DogecoinWalletService] Advertencia al sincronizar en Firebase (offline/local): " + t.getMessage());
+            System.err.println("[DogecoinWalletService] Error al guardar en Firebase Cloud: " + t.getMessage());
         }
     }
 
     /**
-     * Carga y descifra la billetera Dogecoin del usuario desde Firebase Firestore o BD local.
+     * Carga y descifra la billetera Dogecoin del usuario exclusivamente desde Firebase Firestore.
      */
     public static DogeWalletHolder cargarBilleteraCifrada(String userEmail, char[] pin, boolean testnet) throws Exception {
         String key = userEmail.trim().toLowerCase() + (testnet ? "_doge_testnet" : "_doge_mainnet");
         String encoded = null;
 
-        // 1. Intentar cargar desde Firebase Cloud Firestore
+        // Cargar desde Firebase Cloud Firestore
         try {
             Firestore db = FirebaseService.getFirestore();
             if (db != null) {
@@ -315,22 +310,12 @@ public class DogecoinWalletService {
                     String cloudPayload = docSnap.getString("payload_cifrado");
                     if (cloudPayload != null && !cloudPayload.isEmpty()) {
                         encoded = cloudPayload;
-                        LocalDatabaseService.guardarDogeWalletActiva(userEmail, testnet, cloudPayload);
-                        String cloudAddrBook = docSnap.getString("address_book_json");
-                        if (cloudAddrBook != null && !cloudAddrBook.isEmpty()) {
-                            LocalDatabaseService.guardarDogeAddressBook(userEmail, testnet, cloudAddrBook);
-                        }
                         System.out.println("[DogecoinWalletService] Billetera cargada desde Firebase Cloud Firestore.");
                     }
                 }
             }
         } catch (Throwable t) {
-            System.err.println("[DogecoinWalletService] Firebase no disponible, usando BD local: " + t.getMessage());
-        }
-
-        // 2. Cargar desde la Base de Datos Local SQLite
-        if (encoded == null || encoded.isEmpty()) {
-            encoded = LocalDatabaseService.obtenerDogeWalletActiva(userEmail, testnet);
+            System.err.println("[DogecoinWalletService] Error conectando con Firebase Cloud: " + t.getMessage());
         }
 
         if (encoded == null || encoded.isEmpty()) {

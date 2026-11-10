@@ -258,6 +258,7 @@ public class InicioSesion extends javax.swing.JInternalFrame {
 
             if (java.security.MessageDigest.isEqual(computedPassBytes, storedPassBytes)) {
                 SecuritySession.setUserSalt(userSalt); 
+                SecuritySession.setUserPinHash(pinHash);
                 
                 String currentProfile = typingDNA.getTypingProfile();
                 double similarity = TypingDNAManager.compareProfiles(currentProfile, storedTypingProfile);
@@ -269,11 +270,8 @@ public class InicioSesion extends javax.swing.JInternalFrame {
                     Object[] msg = {"🛡️ VERIFICACIÓN BIOMÉTRICA FALLIDA\nConfirme con su PIN:", pfPin};
                     
                     if (JOptionPane.showConfirmDialog(this, msg, "Seguridad", JOptionPane.OK_CANCEL_OPTION) == JOptionPane.OK_OPTION) {
-                        String hashPin = (userSalt != null) ? RSALogica.hashSHA256(pfPin.getPassword(), userSalt) : RSALogica.hashSHA256(pfPin.getPassword(), RSALogica.getUniversalSalt().getBytes(StandardCharsets.UTF_8));
-                        byte[] computedPinBytes = hashPin.toLowerCase().getBytes(StandardCharsets.UTF_8);
-                        byte[] storedPinBytes = pinHash.toLowerCase().getBytes(StandardCharsets.UTF_8);
-                        
-                        if (!java.security.MessageDigest.isEqual(computedPinBytes, storedPinBytes)) {
+                        if (!SecuritySession.verifyUserPin(pfPin.getPassword())) {
+                            com.mycompany.blackpassword.services.IntrusionService.reportFailure(correo, "LOGIN_BIOMETRIC_PIN");
                             JOptionPane.showMessageDialog(this, "PIN incorrecto.", "Error", JOptionPane.ERROR_MESSAGE);
                             return;
                         }
@@ -295,13 +293,13 @@ public class InicioSesion extends javax.swing.JInternalFrame {
                 updates.put("last_login", com.google.cloud.Timestamp.now());
                 db.collection(Objects.requireNonNull(RSALogica.hashConstantToHex("usuarios"))).document(Objects.requireNonNull(docId)).update(updates);
 
-                SecuritySession.setUserPinHash(pinHash);
                 SecuritySession.setLocalUidHash(dbUidHash);
                 SecuritySession.setTypingProfile(currentProfile.equals("INSUFFICIENT_DATA") ? storedTypingProfile : currentProfile);
                 
+                char[] passForSession = pass.clone();
+                SecuritySession.setKeySession(SecuritySession.getPublicKey(), SecuritySession.getPrivateKey(), passForSession);
                 SecuritySession.setMasterPassword(pass); 
-                SecuritySession.setKeySession(SecuritySession.getPublicKey(), SecuritySession.getPrivateKey(), pass);
-                // (Nota: setKeySession ya limpia 'pass', pero lo reforzamos en el finally de este método)
+                // (Nota: setKeySession y setMasterPassword limpian sus copias de 'pass', y se refuerza en finally)
                 
                 try {
                     Map<String, Object> claims = FirebaseService.getCustomClaims(correo);
@@ -313,6 +311,7 @@ public class InicioSesion extends javax.swing.JInternalFrame {
                 lanzarDashboardSeguro(nombre, correo);
                 this.dispose();
             } else {
+                com.mycompany.blackpassword.services.IntrusionService.reportFailure(correo, "LOGIN_PASSWORD");
                 JOptionPane.showMessageDialog(this, "❌ Contraseña incorrecta.", "Error", JOptionPane.ERROR_MESSAGE);
             }
         } catch (Throwable t) {

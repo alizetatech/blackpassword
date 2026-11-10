@@ -494,7 +494,19 @@ public class VpnWireguard extends JInternalFrame {
             String text = field.getText().trim();
             if (!text.isEmpty()) {
                 Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(text), null);
-                ToastNotification.show(this, "Copiado al portapapeles.", ToastNotification.Type.SUCCESS);
+                ToastNotification.show(this, "Copiado al portapapeles (expira en 30s).", ToastNotification.Type.SUCCESS);
+                final String copied = text;
+                javax.swing.Timer purgeTimer = new javax.swing.Timer(30000, evt -> {
+                    try {
+                        java.awt.datatransfer.Clipboard clip = Toolkit.getDefaultToolkit().getSystemClipboard();
+                        if (clip.isDataFlavorAvailable(java.awt.datatransfer.DataFlavor.stringFlavor)) {
+                            String cur = (String) clip.getData(java.awt.datatransfer.DataFlavor.stringFlavor);
+                            if (copied.equals(cur)) clip.setContents(new StringSelection(""), null);
+                        }
+                    } catch (Exception ignored) {}
+                });
+                purgeTimer.setRepeats(false);
+                purgeTimer.start();
             }
         });
         p.add(btnCopiar, BorderLayout.EAST);
@@ -583,6 +595,29 @@ public class VpnWireguard extends JInternalFrame {
         worker.execute();
     }
 
+    private boolean solicitarPinParaAccion(String accionDesc) {
+        javax.swing.JPasswordField pfPin = new javax.swing.JPasswordField(4);
+        pfPin.putClientProperty(FlatClientProperties.STYLE, "showRevealButton: true;");
+        int ok = JOptionPane.showConfirmDialog(this,
+                new Object[]{"Para " + accionDesc + ", ingrese su PIN de seguridad:", pfPin},
+                "Verificación de Seguridad",
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.QUESTION_MESSAGE);
+        if (ok != JOptionPane.OK_OPTION) {
+            return false;
+        }
+        char[] pin = pfPin.getPassword();
+        boolean valid = com.mycompany.blackpassword.services.SecuritySession.verifyUserPin(pin);
+        java.util.Arrays.fill(pin, '0');
+        if (!valid) {
+            com.mycompany.blackpassword.services.IntrusionService.reportFailure(userEmail, "WG_VPN_PIN");
+            JOptionPane.showMessageDialog(this, "PIN incorrecto. Acción cancelada.", "Error de Seguridad", JOptionPane.ERROR_MESSAGE);
+            return false;
+        }
+        com.mycompany.blackpassword.services.IntrusionService.reportSuccess(userEmail);
+        return true;
+    }
+
     private void eliminarPerfilSeleccionado() {
         int row = tblPerfiles.getSelectedRow();
         if (row == -1 || perfilesCargados == null || row >= perfilesCargados.size()) {
@@ -593,6 +628,10 @@ public class VpnWireguard extends JInternalFrame {
         WireguardProfile sel = perfilesCargados.get(row);
         int opt = JOptionPane.showConfirmDialog(this, "¿Desea eliminar el perfil '" + sel.name + "' de Firebase Cloud?", "Confirmar Eliminación", JOptionPane.YES_NO_OPTION);
         if (opt != JOptionPane.YES_OPTION) return;
+
+        if (!solicitarPinParaAccion("eliminar el perfil '" + sel.name + "'")) {
+            return;
+        }
 
         SwingWorker<Boolean, Void> worker = new SwingWorker<>() {
             @Override
@@ -619,6 +658,9 @@ public class VpnWireguard extends JInternalFrame {
         int row = tblPerfiles.getSelectedRow();
         if (row != -1 && perfilesCargados != null && row < perfilesCargados.size()) {
             WireguardProfile sel = perfilesCargados.get(row);
+            if (!solicitarPinParaAccion("editar o ver la configuración de '" + sel.name + "'")) {
+                return;
+            }
             txtNombrePerfil.setText(sel.name);
             txtConfigRaw.setText(sel.rawConfig);
             ToastNotification.show(this, "Perfil cargado en el editor superior.", ToastNotification.Type.INFO);

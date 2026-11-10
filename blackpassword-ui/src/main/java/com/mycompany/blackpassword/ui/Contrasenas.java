@@ -91,7 +91,13 @@ public class Contrasenas extends javax.swing.JInternalFrame {
     private boolean privacyModeActive = false;
     private boolean hideServices = true;
     private boolean hideUsers = true;
-    private static final Preferences prefs = Preferences.userNodeForPackage(Contrasenas.class);
+    static {
+        try {
+            Preferences legacyPrefs = Preferences.userNodeForPackage(Contrasenas.class);
+            legacyPrefs.clear();
+            legacyPrefs.flush();
+        } catch (Exception ignored) {}
+    }
     
     private JLabel jLabelTitulo;
     private List<Map<String, Object>> secretDocumentsRaw = new ArrayList<>();
@@ -99,9 +105,9 @@ public class Contrasenas extends javax.swing.JInternalFrame {
     public Contrasenas(String email) {
         super("Bóveda de Seguridad", false, false, false, false);
         this.userEmail = email;
-        this.privacyModeActive = prefs.getBoolean("privacy_mode_" + userEmail, false);
-        this.hideServices = prefs.getBoolean("privacy_hide_services_" + userEmail, true);
-        this.hideUsers = prefs.getBoolean("privacy_hide_users_" + userEmail, true);
+        this.privacyModeActive = false;
+        this.hideServices = true;
+        this.hideUsers = true;
         validarIntegridad();
         
         try {
@@ -511,7 +517,7 @@ public class Contrasenas extends javax.swing.JInternalFrame {
 
     private void togglePrivacyMode() {
         privacyModeActive = !privacyModeActive;
-        prefs.putBoolean("privacy_mode_" + userEmail, privacyModeActive);
+
         updatePrivacyButton();
         table.repaint();
 
@@ -546,7 +552,7 @@ public class Contrasenas extends javax.swing.JInternalFrame {
                 hideServices = true;
                 itemServices.setSelected(true);
             }
-            prefs.putBoolean("privacy_hide_services_" + userEmail, hideServices);
+
             updatePrivacyButton();
             table.repaint();
             ToastNotification.show(this, hideServices ? "Censura de Sitios activada" : "Censura de Sitios desactivada", ToastNotification.Type.INFO);
@@ -559,7 +565,7 @@ public class Contrasenas extends javax.swing.JInternalFrame {
                 hideUsers = true;
                 itemUsers.setSelected(true);
             }
-            prefs.putBoolean("privacy_hide_users_" + userEmail, hideUsers);
+
             updatePrivacyButton();
             table.repaint();
             ToastNotification.show(this, hideUsers ? "Censura de Usuarios activada" : "Censura de Usuarios desactivada", ToastNotification.Type.INFO);
@@ -769,8 +775,10 @@ public class Contrasenas extends javax.swing.JInternalFrame {
                     String pass = decryptPasswordFromRow(row);
                     JPasswordField pfPass = new JPasswordField(pass); pfPass.setEditable(false);
                     pfPass.putClientProperty(FlatClientProperties.STYLE, "showRevealButton: true");
-                    JOptionPane.showMessageDialog(this, pfPass, "CONTRASEÑA: " + ((privacyModeActive && hideServices) ? "••••••••" : model.getValueAt(table.convertRowIndexToModel(row), 0)), JOptionPane.INFORMATION_MESSAGE);
-                    AuditService.log(userEmail, "VAULT_VIEW", "Acceso a: " + model.getValueAt(row, 0));
+                    int modelRow = table.convertRowIndexToModel(row);
+                    String serviceLabel = (privacyModeActive && hideServices) ? "••••••••" : String.valueOf(model.getValueAt(modelRow, 0));
+                    JOptionPane.showMessageDialog(this, pfPass, "CONTRASEÑA: " + serviceLabel, JOptionPane.INFORMATION_MESSAGE);
+                    AuditService.log(userEmail, "VAULT_VIEW", "Acceso a: " + serviceLabel);
                 } catch (Exception e) { ToastNotification.show(this, "Error al descifrar", ToastNotification.Type.ERROR); }
             } else {
                 IntrusionService.reportFailure(userEmail, "VAULT_PIN_VIEW");
@@ -869,7 +877,7 @@ public class Contrasenas extends javax.swing.JInternalFrame {
             JCheckBoxMenuItem menuHideSites = new JCheckBoxMenuItem("Ocultar Sitios / Servicios", hideServices);
             menuHideSites.addActionListener(ev -> {
                 hideServices = menuHideSites.isSelected();
-                prefs.putBoolean("privacy_hide_services_" + userEmail, hideServices);
+    
                 updatePrivacyButton();
                 table.repaint();
             });
@@ -878,7 +886,7 @@ public class Contrasenas extends javax.swing.JInternalFrame {
             JCheckBoxMenuItem menuHideUsers = new JCheckBoxMenuItem("Ocultar Usuarios / Identidades", hideUsers);
             menuHideUsers.addActionListener(ev -> {
                 hideUsers = menuHideUsers.isSelected();
-                prefs.putBoolean("privacy_hide_users_" + userEmail, hideUsers);
+    
                 updatePrivacyButton();
                 table.repaint();
             });
@@ -909,8 +917,10 @@ public class Contrasenas extends javax.swing.JInternalFrame {
                     String pass = decryptPasswordFromRow(row);
                     StringSelection selection = new StringSelection(pass);
                     Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, selection);
+                    int modelRow = table.convertRowIndexToModel(row);
+                    String serviceLabel = (privacyModeActive && hideServices) ? "••••••••" : String.valueOf(model.getValueAt(modelRow, 0));
                     ToastNotification.show(this, "Copiado al portapapeles (expira en 30s)", ToastNotification.Type.SUCCESS);
-                    AuditService.log(userEmail, "VAULT_PIN_COPY", "Copiado: " + model.getValueAt(row, 0));
+                    AuditService.log(userEmail, "VAULT_PIN_COPY", "Copiado: " + serviceLabel);
 
                     // Autolimpiado del portapapeles tras 30 segundos
                     final String copiedSecret = pass;
@@ -972,7 +982,8 @@ public class Contrasenas extends javax.swing.JInternalFrame {
             return;
         }
 
-        JDialog editDialog = new JDialog(SwingUtilities.getWindowAncestor(this), "EDITAR CREDENCIAL: " + oldService, JDialog.ModalityType.APPLICATION_MODAL);
+        String dialogTitle = (privacyModeActive && hideServices) ? "EDITAR CREDENCIAL" : "EDITAR CREDENCIAL: " + oldService;
+        JDialog editDialog = new JDialog(SwingUtilities.getWindowAncestor(this), dialogTitle, JDialog.ModalityType.APPLICATION_MODAL);
         editDialog.setLayout(new BorderLayout(15, 15));
 
         JPanel contentPanel = new JPanel(new BorderLayout(0, 15));
@@ -1134,8 +1145,10 @@ public class Contrasenas extends javax.swing.JInternalFrame {
                             g.dispose(); qrImage.flush(); System.gc();
                         }
                     });
+                    int modelRow = table.convertRowIndexToModel(row);
+                    String serviceLabel = (privacyModeActive && hideServices) ? "••••••••" : String.valueOf(model.getValueAt(modelRow, 0));
                     qrDialog.pack(); qrDialog.setLocationRelativeTo(this); timer.start(); qrDialog.setVisible(true);
-                    AuditService.log(userEmail, "VAULT_QR_GEN", "QR generado para: " + model.getValueAt(row, 0));
+                    AuditService.log(userEmail, "VAULT_QR_GEN", "QR generado para: " + serviceLabel);
                 } catch (Exception e) { ToastNotification.show(this, "Error QR", ToastNotification.Type.ERROR); }
             } else {
                 IntrusionService.reportFailure(userEmail, "VAULT_PIN_QR");
@@ -1148,9 +1161,17 @@ public class Contrasenas extends javax.swing.JInternalFrame {
         Map<String, Object> data = secretDocumentsRaw.get(table.convertRowIndexToModel(row));
         String enc = (String) data.get("encrypted_payload");
         byte[] dec = RSALogica.descifrarBytesHibrido(Base64.getDecoder().decode(enc), SecuritySession.getPrivateKey());
-        String raw = new String(dec, StandardCharsets.UTF_8);
-        for (String part : raw.split("\\|")) { if (part.startsWith("p:")) return part.substring(2); }
-        return "";
+        try {
+            String raw = new String(dec, StandardCharsets.UTF_8);
+            int pIdx = raw.indexOf("|p:");
+            if (pIdx != -1) {
+                return raw.substring(pIdx + 3);
+            }
+            for (String part : raw.split("\\|")) { if (part.startsWith("p:")) return part.substring(2); }
+            return "";
+        } finally {
+            java.util.Arrays.fill(dec, (byte) 0);
+        }
     }
 
     private void deleteSecret() {
@@ -1218,9 +1239,11 @@ public class Contrasenas extends javax.swing.JInternalFrame {
         if (JOptionPane.showConfirmDialog(this, new Object[]{"Ingrese PIN de seguridad para autorizar exportación:", pfPin}, "AUTORIZACIÓN REQUERIDA", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) return;
         
         if (!SecuritySession.verifyUserPin(pfPin.getPassword())) {
+            IntrusionService.reportFailure(userEmail, "VAULT_PIN_EXPORT");
             JOptionPane.showMessageDialog(this, "PIN INCORRECTO. Exportación cancelada.", "Error", JOptionPane.ERROR_MESSAGE);
             return;
         }
+        IntrusionService.reportSuccess(userEmail);
 
         try {
             String csvContent = com.mycompany.blackpassword.services.ExportService.generateCsvContent(secretDocumentsRaw, SecuritySession.getPrivateKey());

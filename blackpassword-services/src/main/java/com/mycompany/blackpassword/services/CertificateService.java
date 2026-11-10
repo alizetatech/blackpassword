@@ -2,6 +2,8 @@ package com.mycompany.blackpassword.services;
 
 import com.mycompany.blackpassword.crypto.RSALogica;
 import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.asn1.x500.X500NameBuilder;
+import org.bouncycastle.asn1.x500.style.BCStyle;
 import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.cert.X509v3CertificateBuilder;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
@@ -17,8 +19,9 @@ import java.security.cert.X509Certificate;
 import java.util.Date;
 
 /**
- * Servicio de Certificación SSL/X.509 v2.0.
- * Genera certificados digitales estándar de la industria para identidades soberanas.
+ * Servicio de Certificación SSL/X.509 v2.1.
+ * Genera certificados digitales estándar de la industria para identidades soberanas
+ * con construcción segura de RDN (prevención de X.500 DN Injection).
  */
 public class CertificateService {
 
@@ -32,7 +35,13 @@ public class CertificateService {
         // Validez de 2 años para el pasaporte digital
         Date endDate = new Date(now + (2L * 365 * 24 * 60 * 60 * 1000));
         
-        X500Name dnName = new X500Name("CN=" + nombre + ", E=" + email + ", O=Blackpassword Authority, C=ES");
+        X500NameBuilder nameBuilder = new X500NameBuilder(BCStyle.INSTANCE);
+        nameBuilder.addRDN(BCStyle.CN, nombre != null ? nombre : "Usuario");
+        nameBuilder.addRDN(BCStyle.EmailAddress, email != null ? email : "");
+        nameBuilder.addRDN(BCStyle.O, "Blackpassword Authority");
+        nameBuilder.addRDN(BCStyle.C, "ES");
+        X500Name dnName = nameBuilder.build();
+
         BigInteger certSerialNumber = new BigInteger(64, new SecureRandom());
         
         ContentSigner contentSigner = new JcaContentSignerBuilder("SHA256WithRSA").build(priv);

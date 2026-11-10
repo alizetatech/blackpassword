@@ -186,13 +186,27 @@ public class CifradorArchivo extends javax.swing.JInternalFrame {
         JFileChooser fc = new JFileChooser();
         fc.setSelectedFile(new File(archivoSeleccionado.getAbsolutePath() + ".black"));
         if (fc.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
+            char[] pass = txtPassword.getPassword();
             try {
                 File original = archivoSeleccionado;
-                CifradorLogica.cifrarArchivo(original, fc.getSelectedFile(), txtPassword.getPassword(), SecuritySession.getUserSalt());
+                CifradorLogica.cifrarArchivo(original, fc.getSelectedFile(), pass, SecuritySession.getUserSalt());
                 
                 if (checkDestruir.isSelected()) {
+                    try {
+                        long size = original.length();
+                        byte[] zeros = new byte[8192];
+                        try (java.io.FileOutputStream fos = new java.io.FileOutputStream(original)) {
+                            long written = 0;
+                            while (written < size) {
+                                int toWrite = (int) Math.min(zeros.length, size - written);
+                                fos.write(zeros, 0, toWrite);
+                                written += toWrite;
+                            }
+                            fos.getFD().sync();
+                        }
+                    } catch (Exception ignored) {}
                     if (original.delete()) {
-                        ToastNotification.show(this, "Archivo cifrado y original destruido.", ToastNotification.Type.SUCCESS);
+                        ToastNotification.show(this, "Archivo cifrado y original destruido de forma segura.", ToastNotification.Type.SUCCESS);
                         archivoSeleccionado = null;
                         txtRuta.setText("");
                     } else {
@@ -207,6 +221,8 @@ public class CifradorArchivo extends javax.swing.JInternalFrame {
                 }
             } catch (Exception e) {
                 JOptionPane.showMessageDialog(this, "Error al cifrar: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            } finally {
+                java.util.Arrays.fill(pass, (char) 0);
             }
         }
     }
@@ -223,14 +239,17 @@ public class CifradorArchivo extends javax.swing.JInternalFrame {
         fc.setSelectedFile(new File(archivoSeleccionado.getParent(), "descifrado_" + originalName));
         
         if (fc.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
+            char[] pass = txtPassword.getPassword();
             try {
-                CifradorLogica.descifrarArchivo(archivoSeleccionado, fc.getSelectedFile(), txtPassword.getPassword(), SecuritySession.getUserSalt());
+                CifradorLogica.descifrarArchivo(archivoSeleccionado, fc.getSelectedFile(), pass, SecuritySession.getUserSalt());
                 ToastNotification.show(this, "Archivo descifrado con éxito.", ToastNotification.Type.SUCCESS);
                 if (!"Invitado".equals(userEmail)) {
                     AuditService.log(userEmail, "FILE_DECRYPT_LOCAL", "Archivo: " + archivoSeleccionado.getName());
                 }
             } catch (Exception e) {
                 JOptionPane.showMessageDialog(this, "Error al descifrar: Contraseña incorrecta o archivo corrupto.", "Error", JOptionPane.ERROR_MESSAGE);
+            } finally {
+                java.util.Arrays.fill(pass, (char) 0);
             }
         }
     }
