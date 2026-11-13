@@ -422,6 +422,10 @@ public class CloudFunctionsClient {
         Request request = buildAuthenticatedRequest(path, "POST", body);
 
         try (Response response = httpClient.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                String err = response.body() != null ? response.body().string() : "No body";
+                System.err.println("[CloudFunctionsClient] POST " + path + " falló HTTP " + response.code() + ": " + err);
+            }
             return response.isSuccessful();
         }
     }

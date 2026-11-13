@@ -98,63 +98,64 @@ public class VaultManager {
                             }
                         }
                     }
-                    if (!combined.isEmpty()) {
-                        System.out.println("[VaultManager] " + combined.size() + " credenciales recuperadas vía Cloud Functions HTTPS.");
-                        return combined;
-                    }
+                    System.out.println("[VaultManager] " + combined.size() + " credenciales recuperadas vía Cloud Functions HTTPS.");
+                    return combined;
                 } catch (Exception cfEx) {
-                    System.err.println("[VaultManager] Aviso: Fallo Cloud Functions HTTPS, probando fallback: " + cfEx.getMessage());
+                    System.err.println("[VaultManager] Error en Cloud Functions HTTPS listVaultItems: " + cfEx.getMessage());
+                    return combined;
                 }
             }
 
             // 2. Fallback: Conexión SDK tradicional (si existe)
             try {
                 Firestore db = FirebaseService.getFirestore();
-                String path = Objects.requireNonNull(getVaultPath(email));
-                var queryResult = db.collection(path).get().get();
+                if (db != null) {
+                    String path = Objects.requireNonNull(getVaultPath(email));
+                    var queryResult = db.collection(path).get().get();
 
-                if (queryResult.isEmpty()) {
-                    String legacyPath = Objects.requireNonNull(path.toUpperCase());
-                    queryResult = db.collection(Objects.requireNonNull(legacyPath)).get().get();
-                }
+                    if (queryResult.isEmpty()) {
+                        String legacyPath = Objects.requireNonNull(path.toUpperCase());
+                        queryResult = db.collection(Objects.requireNonNull(legacyPath)).get().get();
+                    }
 
-                for (var doc : queryResult.getDocuments()) {
-                    Map<String, Object> data = doc.getData();
-                    String enc = (String) data.get("secreto_cifrado");
+                    for (var doc : queryResult.getDocuments()) {
+                        Map<String, Object> data = doc.getData();
+                        String enc = (String) data.get("secreto_cifrado");
 
-                    if (enc != null) {
-                        try {
-                            byte[] dec = RSALogica.descifrarBytesHibrido(Base64.getDecoder().decode(enc), SecuritySession.getPrivateKey());
-                            String raw = new String(dec, StandardCharsets.UTF_8);
-                            String s = "DESCONOCIDO", u = "DESCONOCIDO";
-                            int uIdx = raw.indexOf("|u:");
-                            int pIdx = raw.indexOf("|p:", uIdx >= 0 ? uIdx : 0);
-                            if (raw.startsWith("s:") && uIdx > 2 && pIdx > uIdx) {
-                                s = raw.substring(2, uIdx);
-                                u = raw.substring(uIdx + 3, pIdx);
-                            } else {
-                                for (String part : raw.split("\\|")) {
-                                    if (part.startsWith("s:")) s = part.substring(2);
-                                    if (part.startsWith("u:")) u = part.substring(2);
+                        if (enc != null) {
+                            try {
+                                byte[] dec = RSALogica.descifrarBytesHibrido(Base64.getDecoder().decode(enc), SecuritySession.getPrivateKey());
+                                String raw = new String(dec, StandardCharsets.UTF_8);
+                                String s = "DESCONOCIDO", u = "DESCONOCIDO";
+                                int uIdx = raw.indexOf("|u:");
+                                int pIdx = raw.indexOf("|p:", uIdx >= 0 ? uIdx : 0);
+                                if (raw.startsWith("s:") && uIdx > 2 && pIdx > uIdx) {
+                                    s = raw.substring(2, uIdx);
+                                    u = raw.substring(uIdx + 3, pIdx);
+                                } else {
+                                    for (String part : raw.split("\\|")) {
+                                        if (part.startsWith("s:")) s = part.substring(2);
+                                        if (part.startsWith("u:")) u = part.substring(2);
+                                    }
                                 }
+
+                                Map<String, Object> row = new HashMap<>();
+                                row.put("id", doc.getId());
+                                row.put("service", s.toUpperCase());
+                                row.put("username", u);
+                                row.put("encrypted_payload", enc);
+
+                                com.google.cloud.Timestamp ts = doc.getTimestamp("fecha_actualizacion");
+                                row.put("date", (ts != null) ? ts.toDate().toString().substring(0, 19) : "N/A");
+                                combined.add(row);
+
+                                SecureCharArray.clear(dec);
+                            } catch (Exception e) {
+                                Map<String, Object> errRow = new HashMap<>();
+                                errRow.put("service", "⚠️ ERROR");
+                                errRow.put("username", "FALLO DE DESCIFRADO");
+                                combined.add(errRow);
                             }
-
-                            Map<String, Object> row = new HashMap<>();
-                            row.put("id", doc.getId());
-                            row.put("service", s.toUpperCase());
-                            row.put("username", u);
-                            row.put("encrypted_payload", enc);
-
-                            com.google.cloud.Timestamp ts = doc.getTimestamp("fecha_actualizacion");
-                            row.put("date", (ts != null) ? ts.toDate().toString().substring(0, 19) : "N/A");
-                            combined.add(row);
-
-                            SecureCharArray.clear(dec);
-                        } catch (Exception e) {
-                            Map<String, Object> errRow = new HashMap<>();
-                            errRow.put("service", "⚠️ ERROR");
-                            errRow.put("username", "FALLO DE DESCIFRADO");
-                            combined.add(errRow);
                         }
                     }
                 }
@@ -215,19 +216,24 @@ public class VaultManager {
                     boolean ok = CloudFunctionsClient.getInstance().saveVaultItem(docId, b64, null, serviceUpper, email);
                     if (ok) {
                         System.out.println("[VaultManager] Credencial '" + serviceUpper + "' guardada vía Cloud Functions HTTPS.");
-                        return true;
+                    } else {
+                        System.err.println("[VaultManager] Fallo al guardar credencial vía Cloud Functions HTTPS: " + serviceUpper);
                     }
+                    return ok;
                 }
 
                 // 2. Fallback a SDK tradicional si no hay Cloud Functions
                 Firestore db = FirebaseService.getFirestore();
-                Map<String, Object> remoteData = new HashMap<>();
-                remoteData.put("secreto_cifrado", b64);
-                remoteData.put("fecha_actualizacion", com.google.cloud.Timestamp.now());
+                if (db != null) {
+                    Map<String, Object> remoteData = new HashMap<>();
+                    remoteData.put("secreto_cifrado", b64);
+                    remoteData.put("fecha_actualizacion", com.google.cloud.Timestamp.now());
 
-                var writeResultFuture = db.collection(Objects.requireNonNull(getVaultPath(email))).add(remoteData);
-                writeResultFuture.get();
-                return true;
+                    var writeResultFuture = db.collection(Objects.requireNonNull(getVaultPath(email))).add(remoteData);
+                    writeResultFuture.get();
+                    return true;
+                }
+                return false;
             } catch (Exception e) {
                 System.err.println("[VaultManager] Error al sincronizar: " + e.getMessage());
                 return false;
@@ -290,24 +296,29 @@ public class VaultManager {
                     boolean ok = CloudFunctionsClient.getInstance().saveVaultItem(docId, b64, null, serviceUpper, email);
                     if (ok) {
                         System.out.println("[VaultManager] Credencial actualizada vía Cloud Functions HTTPS.");
-                        return true;
+                    } else {
+                        System.err.println("[VaultManager] Fallo al actualizar credencial vía Cloud Functions HTTPS: " + serviceUpper);
                     }
+                    return ok;
                 }
 
                 // 2. Fallback a SDK tradicional
                 Firestore db = FirebaseService.getFirestore();
-                Map<String, Object> remoteData = new HashMap<>();
-                remoteData.put("secreto_cifrado", b64);
-                remoteData.put("fecha_actualizacion", com.google.cloud.Timestamp.now());
+                if (db != null) {
+                    Map<String, Object> remoteData = new HashMap<>();
+                    remoteData.put("secreto_cifrado", b64);
+                    remoteData.put("fecha_actualizacion", com.google.cloud.Timestamp.now());
 
-                if (firestoreDocId != null && !firestoreDocId.trim().isEmpty()) {
-                    var writeResultFuture = db.collection(Objects.requireNonNull(getVaultPath(email))).document(firestoreDocId).set(remoteData);
-                    writeResultFuture.get();
-                } else {
-                    var writeResultFuture = db.collection(Objects.requireNonNull(getVaultPath(email))).add(remoteData);
-                    writeResultFuture.get();
+                    if (firestoreDocId != null && !firestoreDocId.trim().isEmpty()) {
+                        var writeResultFuture = db.collection(Objects.requireNonNull(getVaultPath(email))).document(firestoreDocId).set(remoteData);
+                        writeResultFuture.get();
+                    } else {
+                        var writeResultFuture = db.collection(Objects.requireNonNull(getVaultPath(email))).add(remoteData);
+                        writeResultFuture.get();
+                    }
+                    return true;
                 }
-                return true;
+                return false;
             } catch (Exception e) {
                 System.err.println("[VaultManager] Error al actualizar secreto: " + e.getMessage());
                 return false;
@@ -322,25 +333,33 @@ public class VaultManager {
     /**
      * Elimina un secreto vía Cloud Functions HTTPS o Firestore.
      */
-    public static void deleteSecret(String email, String serviceId, String firestoreDocId) {
-        if (!SecuritySession.isIdentityValid(email)) return;
+    public static CompletableFuture<Boolean> deleteSecret(String email, String serviceId, String firestoreDocId) {
+        if (!SecuritySession.isIdentityValid(email)) return CompletableFuture.completedFuture(false);
 
-        CompletableFuture.runAsync(() -> {
+        return CompletableFuture.supplyAsync(() -> {
             try {
                 if (FirebaseService.isCloudFunctionsActive() && firestoreDocId != null) {
                     boolean ok = CloudFunctionsClient.getInstance().deleteVaultItem(firestoreDocId, email);
                     if (ok) {
                         System.out.println("[VaultManager] Credencial eliminada vía Cloud Functions HTTPS: " + firestoreDocId);
-                        return;
+                    } else {
+                        System.err.println("[VaultManager] Fallo al eliminar credencial vía Cloud Functions HTTPS: " + firestoreDocId);
                     }
+                    return ok;
                 }
 
                 if (firestoreDocId != null) {
-                    var deleteFuture = FirebaseService.getFirestore().collection(Objects.requireNonNull(getVaultPath(email))).document(firestoreDocId).delete();
-                    deleteFuture.get();
+                    Firestore db = FirebaseService.getFirestore();
+                    if (db != null) {
+                        var deleteFuture = db.collection(Objects.requireNonNull(getVaultPath(email))).document(firestoreDocId).delete();
+                        deleteFuture.get();
+                        return true;
+                    }
                 }
+                return false;
             } catch (Exception e) {
                 System.err.println("[VaultManager] Error al borrar remoto: " + e.getMessage());
+                return false;
             }
         });
     }

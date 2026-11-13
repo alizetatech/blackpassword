@@ -1204,10 +1204,18 @@ public class Contrasenas extends javax.swing.JInternalFrame {
         }
         IntrusionService.reportSuccess(userEmail);
 
-        VaultManager.deleteSecret(userEmail, serviceId, firestoreDocId);
-        ToastNotification.show(this, "Eliminando...", ToastNotification.Type.SUCCESS);
-        AuditService.log(userEmail, "VAULT_DELETE", "Eliminado: " + serviceId);
-        loadSecretsFromFirebase();
+        ToastNotification.show(this, "Eliminando credencial...", ToastNotification.Type.INFO);
+        VaultManager.deleteSecret(userEmail, serviceId, firestoreDocId).thenAccept(success -> {
+            java.awt.EventQueue.invokeLater(() -> {
+                if (success) {
+                    ToastNotification.show(this, "Credencial eliminada exitosamente.", ToastNotification.Type.SUCCESS);
+                    AuditService.log(userEmail, "VAULT_DELETE", "Eliminado: " + serviceId);
+                    loadSecretsFromFirebase();
+                } else {
+                    ToastNotification.show(this, "Error al eliminar credencial de la bóveda.", ToastNotification.Type.ERROR);
+                }
+            });
+        });
     }
 
     private void showExportMenu() {

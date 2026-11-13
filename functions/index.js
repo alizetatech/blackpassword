@@ -380,22 +380,14 @@ app.post("/vault/save", requireAuth, async (req, res) => {
       id: id,
       payload_cifrado: payload_cifrado,
       secreto_cifrado: payload_cifrado,
-      metadata_cifrada: metadata_cifrada || null,
+      metadata_cifrada: metadata_cifrada || "",
       tag: tag || "general",
       actualizado_en: admin.firestore.FieldValue.serverTimestamp(),
       fecha_actualizacion: admin.firestore.FieldValue.serverTimestamp(),
     };
 
-    // Guardar en colección moderna
-    await db.collection("usuarios").doc(uid).collection("boveda").doc(id).set(payloadToSave, { merge: true });
-
-    // Guardar en colección legacy para compatibilidad
-    if (email) {
-      const emailHash = crypto.createHash("sha256").update(email).digest("hex");
-      const colUsuarios = crypto.createHash("sha256").update("usuarios").digest("hex");
-      const colBoveda = crypto.createHash("sha256").update("boveda").digest("hex");
-      await db.collection(colUsuarios).doc(emailHash).collection(colBoveda).doc(id).set(payloadToSave, { merge: true });
-    }
+    const { collections } = await getVaultCollections(uid, email);
+    await Promise.allSettled(collections.map((colRef) => colRef.doc(id).set(payloadToSave, { merge: true })));
 
     return res.json({ success: true, message: "Elemento guardado en bóveda." });
   } catch (err) {
