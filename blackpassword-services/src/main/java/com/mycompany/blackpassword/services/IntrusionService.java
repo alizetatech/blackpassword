@@ -52,6 +52,7 @@ public class IntrusionService {
     private static void generateIntrusionAlert(String email, String type, int attempts) {
         try {
             Firestore db = FirebaseService.getFirestore();
+            if (db == null) return;
             Map<String, Object> alert = new HashMap<>();
             alert.put("timestamp", Timestamp.now());
             
@@ -77,6 +78,7 @@ public class IntrusionService {
         List<Map<String, Object>> alerts = new ArrayList<>();
         try {
             Firestore db = FirebaseService.getFirestore();
+            if (db == null) return alerts;
             char[] emailChars = email.toCharArray();
             char[] emailHashChars = RSALogica.hashToHex(emailChars, null);
             String emailHash = new String(emailHashChars);
@@ -103,7 +105,10 @@ public class IntrusionService {
     public static void markAsRead(String alertId) {
         try {
             java.util.Objects.requireNonNull(alertId);
-            FirebaseService.getFirestore().collection("intrusion_alerts").document(alertId).update("leida", true);
+            Firestore db = FirebaseService.getFirestore();
+            if (db != null) {
+                db.collection("intrusion_alerts").document(alertId).update("leida", true);
+            }
         } catch (Exception e) {
             System.err.println("[IntrusionService] Error al marcar alerta como leída: " + e.getMessage());
         }

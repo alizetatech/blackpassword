@@ -5,6 +5,7 @@ import com.google.cloud.firestore.Firestore;
 import com.google.cloud.firestore.Query;
 import com.mycompany.blackpassword.services.AuditService;
 import com.mycompany.blackpassword.services.FirebaseService;
+import com.mycompany.blackpassword.services.CloudFunctionsClient;
 import com.mycompany.blackpassword.services.IntrusionService;
 import com.mycompany.blackpassword.crypto.RSALogica;
 import com.mycompany.blackpassword.services.ReportService;
@@ -59,8 +60,47 @@ public class Reportes extends javax.swing.JInternalFrame {
         model.setRowCount(0);
         if (!SecuritySession.isSessionActive()) return;
 
+        if (FirebaseService.isCloudFunctionsActive()) {
+            new Thread(() -> {
+                try {
+                    var items = CloudFunctionsClient.getInstance().listAuditLogs(userEmail);
+                    for (var el : items) {
+                        if (!el.isJsonObject()) continue;
+                        var doc = el.getAsJsonObject();
+                        String fecha = "N/A";
+                        if (doc.has("timestamp") && doc.get("timestamp").isJsonObject()) {
+                            var tsObj = doc.getAsJsonObject("timestamp");
+                            if (tsObj.has("_seconds")) {
+                                long sec = tsObj.get("_seconds").getAsLong();
+                                fecha = new java.util.Date(sec * 1000).toString();
+                            }
+                        }
+                        String accion = doc.has("accion") && !doc.get("accion").isJsonNull() ? doc.get("accion").getAsString() : "N/A";
+                        String detalles = "N/A";
+                        if (doc.has("detalles_cifrados") && !doc.get("detalles_cifrados").isJsonNull() && !doc.get("detalles_cifrados").getAsString().isEmpty()) {
+                            try {
+                                byte[] enc = Base64.getDecoder().decode(doc.get("detalles_cifrados").getAsString());
+                                byte[] dec = RSALogica.descifrarBytesHibrido(enc, SecuritySession.getPrivateKey());
+                                detalles = new String(dec, StandardCharsets.UTF_8);
+                            } catch (Exception e) {
+                                detalles = "[Error de Descifrado]";
+                            }
+                        } else if (doc.has("detalles_ofuscados") && !doc.get("detalles_ofuscados").isJsonNull()) {
+                            detalles = "[Dato Ofuscado]";
+                        }
+                        String finalF = fecha, finalA = accion, finalD = detalles;
+                        javax.swing.SwingUtilities.invokeLater(() -> model.addRow(new Object[]{finalF, finalA, finalD}));
+                    }
+                } catch (Exception e) {
+                    System.err.println("Error cargando logs vía Cloud Functions: " + e.getMessage());
+                }
+            }).start();
+            return;
+        }
+
         try {
             Firestore db = FirebaseService.getFirestore();
+            if (db == null) return;
             String emailHash = RSALogica.hashConstantToHex(userEmail);
             
             db.collection("audit_logs")

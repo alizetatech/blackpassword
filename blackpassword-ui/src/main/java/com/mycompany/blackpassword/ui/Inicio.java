@@ -54,6 +54,7 @@ public class Inicio extends javax.swing.JInternalFrame {
         
         btdecifrar.putClientProperty(FlatClientProperties.STYLE, "arc: 16; background: #0078D4; foreground: #FFFFFF; hoverBackground: #005A9E; borderWidth: 0; font: bold 14");
         btnGeneradorConfig.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #107C10; foreground: #FFFFFF; hoverBackground: #0E680E; borderWidth: 0; font: bold 12");
+        btnMigrarKek.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #6B21A8; foreground: #FFFFFF; hoverBackground: #581C87; borderWidth: 0; font: bold 12");
         btnGeneradorQr.putClientProperty(FlatClientProperties.STYLE, "arc: 12; background: #E1F0FE; foreground: #0078D4; hoverBackground: #CCE5FF; borderWidth: 0; font: bold 12");
         
         jPanelMain.putClientProperty(FlatClientProperties.STYLE, "background: #FFFFFF; border: 1,1,1,1, #E0E0E0, 1, 20");
@@ -116,6 +117,7 @@ public class Inicio extends javax.swing.JInternalFrame {
         btnVirtualKey = new javax.swing.JButton();
         btdecifrar = new javax.swing.JButton();
         btnGeneradorConfig = new javax.swing.JButton();
+        btnMigrarKek = new javax.swing.JButton();
         btnGeneradorQr = new javax.swing.JButton();
 
         setClosable(true); setIconifiable(true); setTitle("🛡️ FORTALEZA v6.5");
@@ -144,11 +146,17 @@ public class Inicio extends javax.swing.JInternalFrame {
         
         btnGeneradorConfig.setText("⚙️ GENERADOR DE CONFIGURACIÓN");
         btnGeneradorConfig.addActionListener(evt -> {
-            GeneradorConfiguracionInicio genFrame = new GeneradorConfiguracionInicio(file -> {
-                setBundlePath(file.getAbsolutePath());
-            });
             javax.swing.JDesktopPane desktop = this.getDesktopPane();
             if (desktop != null) {
+                for (javax.swing.JInternalFrame f : desktop.getAllFrames()) {
+                    if (f instanceof GeneradorConfiguracionInicio && f.isVisible() && !f.isClosed()) {
+                        try { if (f.isIcon()) f.setIcon(false); f.toFront(); f.setSelected(true); } catch (Exception ignored) {}
+                        return;
+                    }
+                }
+                GeneradorConfiguracionInicio genFrame = new GeneradorConfiguracionInicio(file -> {
+                    setBundlePath(file.getAbsolutePath());
+                });
                 desktop.add(genFrame);
                 int x = (desktop.getWidth() - genFrame.getWidth()) / 2;
                 int y = (desktop.getHeight() - genFrame.getHeight()) / 2;
@@ -157,11 +165,38 @@ public class Inicio extends javax.swing.JInternalFrame {
             }
         });
 
-        btnGeneradorQr.setText("📱 HERRAMIENTA: GENERAR QR");
-        btnGeneradorQr.addActionListener(evt -> {
-            GeneradorQr qrFrame = new GeneradorQr();
+        btnMigrarKek.setText("🔄 ACTUALIZAR CONFIGURACIÓN DE .KEK");
+        btnMigrarKek.addActionListener(evt -> {
             javax.swing.JDesktopPane desktop = this.getDesktopPane();
             if (desktop != null) {
+                for (javax.swing.JInternalFrame f : desktop.getAllFrames()) {
+                    if (f instanceof MigradorPaqueteKek && f.isVisible() && !f.isClosed()) {
+                        try { if (f.isIcon()) f.setIcon(false); f.toFront(); f.setSelected(true); } catch (Exception ignored) {}
+                        return;
+                    }
+                }
+                MigradorPaqueteKek migradorFrame = new MigradorPaqueteKek(file -> {
+                    setBundlePath(file.getAbsolutePath());
+                });
+                desktop.add(migradorFrame);
+                int x = (desktop.getWidth() - migradorFrame.getWidth()) / 2;
+                int y = (desktop.getHeight() - migradorFrame.getHeight()) / 2;
+                migradorFrame.setLocation(Math.max(0, x), Math.max(0, y));
+                migradorFrame.setVisible(true);
+            }
+        });
+
+        btnGeneradorQr.setText("📱 HERRAMIENTA: GENERAR QR");
+        btnGeneradorQr.addActionListener(evt -> {
+            javax.swing.JDesktopPane desktop = this.getDesktopPane();
+            if (desktop != null) {
+                for (javax.swing.JInternalFrame f : desktop.getAllFrames()) {
+                    if (f instanceof GeneradorQr && f.isVisible() && !f.isClosed()) {
+                        try { if (f.isIcon()) f.setIcon(false); f.toFront(); f.setSelected(true); } catch (Exception ignored) {}
+                        return;
+                    }
+                }
+                GeneradorQr qrFrame = new GeneradorQr();
                 desktop.add(qrFrame);
                 int x = (desktop.getWidth() - qrFrame.getWidth()) / 2;
                 int y = (desktop.getHeight() - qrFrame.getHeight()) / 2;
@@ -211,6 +246,7 @@ public class Inicio extends javax.swing.JInternalFrame {
                         .addComponent(btnVirtualKey, javax.swing.GroupLayout.PREFERRED_SIZE, 45, javax.swing.GroupLayout.PREFERRED_SIZE))
                     .addComponent(btdecifrar, javax.swing.GroupLayout.PREFERRED_SIZE, 331, javax.swing.GroupLayout.PREFERRED_SIZE)
                     .addComponent(btnGeneradorConfig, javax.swing.GroupLayout.PREFERRED_SIZE, 331, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addComponent(btnMigrarKek, javax.swing.GroupLayout.PREFERRED_SIZE, 331, javax.swing.GroupLayout.PREFERRED_SIZE)
                     .addComponent(btnGeneradorQr, javax.swing.GroupLayout.PREFERRED_SIZE, 331, javax.swing.GroupLayout.PREFERRED_SIZE))
                 .addContainerGap(45, Short.MAX_VALUE))
         );
@@ -258,6 +294,8 @@ public class Inicio extends javax.swing.JInternalFrame {
                 .addComponent(btdecifrar, javax.swing.GroupLayout.PREFERRED_SIZE, 45, javax.swing.GroupLayout.PREFERRED_SIZE)
                 .addGap(10, 10, 10)
                 .addComponent(btnGeneradorConfig, javax.swing.GroupLayout.PREFERRED_SIZE, 35, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addGap(10, 10, 10)
+                .addComponent(btnMigrarKek, javax.swing.GroupLayout.PREFERRED_SIZE, 35, javax.swing.GroupLayout.PREFERRED_SIZE)
                 .addGap(10, 10, 10)
                 .addComponent(btnGeneradorQr, javax.swing.GroupLayout.PREFERRED_SIZE, 35, javax.swing.GroupLayout.PREFERRED_SIZE)
                 .addContainerGap(25, Short.MAX_VALUE))
@@ -424,6 +462,7 @@ public class Inicio extends javax.swing.JInternalFrame {
     private javax.swing.JButton btbuscarPriv;
     private javax.swing.JButton btdecifrar;
     private javax.swing.JButton btnGeneradorConfig;
+    private javax.swing.JButton btnMigrarKek;
     private javax.swing.JButton btnGeneradorQr;
     private javax.swing.JButton btnGuardarPerfil;
     private javax.swing.JButton btnEliminarPerfil;

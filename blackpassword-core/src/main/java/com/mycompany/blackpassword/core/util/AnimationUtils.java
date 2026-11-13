@@ -29,6 +29,7 @@ public class AnimationUtils {
         // Punto de inicio (ligeramente más abajo para efecto slide-up)
         frame.setLocation(finalX, finalY + 30);
         frame.setVisible(true);
+        frame.toFront();
 
         Timer timer = new Timer(15, null);
         long startTime = System.currentTimeMillis();
@@ -51,6 +52,7 @@ public class AnimationUtils {
                 timer.stop();
                 frame.setLocation(finalX, finalY);
                 try {
+                    frame.toFront();
                     frame.setSelected(true);
                 } catch (Exception ex) {}
             }

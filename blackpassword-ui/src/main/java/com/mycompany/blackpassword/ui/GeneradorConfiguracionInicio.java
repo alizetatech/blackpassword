@@ -45,7 +45,7 @@ public class GeneradorConfiguracionInicio extends javax.swing.JInternalFrame {
 
         String fieldStyle = "arc: 12; background: #FFFFFF";
         txtFirebasePath.putClientProperty(FlatClientProperties.STYLE, fieldStyle);
-        txtFirebasePath.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT, "Seleccione archivo serviceAccount.json o .black...");
+        txtFirebasePath.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT, "Seleccione archivo firebase_config.json, serviceAccount.json o .black...");
         
         txtTargetDir.putClientProperty(FlatClientProperties.STYLE, fieldStyle);
         txtTargetDir.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT, "Carpeta donde se guardará el paquete KEK...");

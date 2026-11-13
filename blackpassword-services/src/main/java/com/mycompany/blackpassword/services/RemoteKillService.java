@@ -40,7 +40,17 @@ public class RemoteKillService {
     public static void checkStatus() throws Exception {
         if (currentUserEmail == null) return;
 
+        if (FirebaseService.isCloudFunctionsActive()) {
+            String status = FirebaseService.getCloudFunctionsClient().checkAccountStatus();
+            if ("COMPROMISED".equalsIgnoreCase(status)) {
+                System.err.println("[RemoteKill] ¡ESTADO COMPROMETIDO DETECTADO VÍA CLOUD FUNCTIONS! Iniciando purga...");
+                triggerKill();
+            }
+            return;
+        }
+
         Firestore db = FirebaseService.getFirestore();
+        if (db == null) return;
         String colName = RSALogica.hashConstantToHex("usuarios");
         String docId = RSALogica.hashConstantToHex(currentUserEmail);
         
@@ -75,18 +85,28 @@ public class RemoteKillService {
      */
     public static void selfDestruct(String email) {
         try {
+            if (FirebaseService.isCloudFunctionsActive()) {
+                FirebaseService.getCloudFunctionsClient().triggerKillSwitch();
+                AuditService.log(email, "REMOTE_KILL_TRIGGERED", "El usuario ha activado el Kill Switch manualmente vía Cloud Functions.");
+                return;
+            }
+
             // 1. Actualizar Firestore para monitoreo activo
             Firestore db = FirebaseService.getFirestore();
-            String colName = RSALogica.hashConstantToHex("usuarios");
-            String docId = RSALogica.hashConstantToHex(email);
-            db.collection(java.util.Objects.requireNonNull(colName))
-                .document(java.util.Objects.requireNonNull(docId)).update("status", "COMPROMISED").get();
+            if (db != null) {
+                String colName = RSALogica.hashConstantToHex("usuarios");
+                String docId = RSALogica.hashConstantToHex(email);
+                db.collection(java.util.Objects.requireNonNull(colName))
+                    .document(java.util.Objects.requireNonNull(docId)).update("status", "COMPROMISED").get();
+            }
 
             // 2. Actualizar Custom Claims para bloqueo inmediato por Reglas
-            UserRecord user = FirebaseService.getAuth().getUserByEmail(email);
-            Map<String, Object> claims = new HashMap<>(user.getCustomClaims());
-            claims.put("account_status", "COMPROMISED");
-            FirebaseService.setCustomClaims(user.getUid(), claims);
+            if (FirebaseService.getAuth() != null) {
+                UserRecord user = FirebaseService.getAuth().getUserByEmail(email);
+                Map<String, Object> claims = new HashMap<>(user.getCustomClaims());
+                claims.put("account_status", "COMPROMISED");
+                FirebaseService.setCustomClaims(user.getUid(), claims);
+            }
 
             AuditService.log(email, "REMOTE_KILL_TRIGGERED", "El usuario ha activado el Kill Switch manualmente. Cuenta bloqueada en Auth y DB.");
         } catch (Exception e) {

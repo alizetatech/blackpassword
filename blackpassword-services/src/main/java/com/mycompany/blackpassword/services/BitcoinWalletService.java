@@ -207,7 +207,17 @@ public class BitcoinWalletService {
     public static boolean existeBilletera(String userEmail, boolean testnet) {
         if (userEmail == null || userEmail.isEmpty()) return false;
 
-        // 1. Comprobar en Firebase Cloud Firestore
+        // 1. Comprobar vía Cloud Functions HTTPS
+        if (FirebaseService.isCloudFunctionsActive()) {
+            try {
+                com.google.gson.JsonObject walletJson = CloudFunctionsClient.getInstance().getWallet("BTC", testnet ? "testnet" : "mainnet", userEmail);
+                if (walletJson != null && walletJson.has("payload_cifrado") && !walletJson.get("payload_cifrado").getAsString().isEmpty()) {
+                    return true;
+                }
+            } catch (Throwable ignored) {}
+        }
+
+        // 2. Comprobar en Firebase Cloud Firestore tradicional
         try {
             Firestore db = FirebaseService.getFirestore();
             if (db != null) {
@@ -261,6 +271,18 @@ public class BitcoinWalletService {
 
         String encoded = java.util.Base64.getEncoder().encodeToString(finalPayload);
 
+        // Guardar vía Cloud Functions HTTPS
+        if (FirebaseService.isCloudFunctionsActive()) {
+            try {
+                boolean ok = CloudFunctionsClient.getInstance().saveWallet("BTC", testnet ? "testnet" : "mainnet", encoded, userEmail);
+                if (ok) {
+                    System.out.println("[BitcoinWalletService] Billetera cifrada guardada vía Cloud Functions HTTPS (" + (testnet ? "TESTNET" : "MAINNET") + ")");
+                }
+            } catch (Throwable t) {
+                System.err.println("[BitcoinWalletService] Error guardando vía Cloud Functions: " + t.getMessage());
+            }
+        }
+
         // Guardar exclusivamente en Firebase Cloud Firestore (Zero-Disk)
         try {
             Firestore db = FirebaseService.getFirestore();
@@ -292,23 +314,41 @@ public class BitcoinWalletService {
         String encoded = null;
         boolean migratedFromRegistry = false;
 
-        // 1. Cargar desde Firebase Cloud Firestore
-        try {
-            Firestore db = FirebaseService.getFirestore();
-            if (db != null) {
-                String path = getBtcFirestorePath(userEmail);
-                String docId = testnet ? "testnet" : "mainnet";
-                var docSnap = db.collection(path).document(docId).get().get();
-                if (docSnap.exists()) {
-                    String cloudPayload = docSnap.getString("payload_cifrado");
+        // 1. Cargar vía Cloud Functions HTTPS
+        if (FirebaseService.isCloudFunctionsActive()) {
+            try {
+                com.google.gson.JsonObject walletJson = CloudFunctionsClient.getInstance().getWallet("BTC", testnet ? "testnet" : "mainnet", userEmail);
+                if (walletJson != null && walletJson.has("payload_cifrado")) {
+                    String cloudPayload = walletJson.get("payload_cifrado").getAsString();
                     if (cloudPayload != null && !cloudPayload.isEmpty()) {
                         encoded = cloudPayload;
-                        System.out.println("[BitcoinWalletService] Billetera cargada directamente desde Firebase Cloud Firestore.");
+                        System.out.println("[BitcoinWalletService] Billetera BTC cargada vía Cloud Functions HTTPS.");
                     }
                 }
+            } catch (Throwable t) {
+                System.err.println("[BitcoinWalletService] Aviso Cloud Functions: " + t.getMessage());
             }
-        } catch (Throwable t) {
-            System.err.println("[BitcoinWalletService] Error conectando con Firebase Cloud: " + t.getMessage());
+        }
+
+        // 2. Cargar desde Firebase Cloud Firestore tradicional
+        if (encoded == null || encoded.isEmpty()) {
+            try {
+                Firestore db = FirebaseService.getFirestore();
+                if (db != null) {
+                    String path = getBtcFirestorePath(userEmail);
+                    String docId = testnet ? "testnet" : "mainnet";
+                    var docSnap = db.collection(path).document(docId).get().get();
+                    if (docSnap.exists()) {
+                        String cloudPayload = docSnap.getString("payload_cifrado");
+                        if (cloudPayload != null && !cloudPayload.isEmpty()) {
+                            encoded = cloudPayload;
+                            System.out.println("[BitcoinWalletService] Billetera cargada directamente desde Firebase Cloud Firestore.");
+                        }
+                    }
+                }
+            } catch (Throwable t) {
+                System.err.println("[BitcoinWalletService] Error conectando con Firebase Cloud: " + t.getMessage());
+            }
         }
 
         // 3. Fallback de migración automática si aún residía en el Registro de Windows

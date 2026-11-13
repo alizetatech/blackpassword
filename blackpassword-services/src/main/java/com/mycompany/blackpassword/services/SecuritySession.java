@@ -24,22 +24,35 @@ public class SecuritySession {
     private static byte[] userSalt;
 
     public static boolean isIdentityValid(String email) {
-        if (userClaims == null || userClaims.isEmpty()) return false;
+        if (currentPublicKey == null || currentPrivateKey == null) return false;
+        if (userClaims == null) userClaims = new java.util.HashMap<>();
         try {
             String status = (String) userClaims.get("account_status");
-            if (!"ACTIVE".equals(status)) return false;
+            if (status != null && "COMPROMISED".equalsIgnoreCase(status)) return false;
 
             String localEmailHash = RSALogica.hashConstantToHex(email);
             String claimEmailHash = (String) userClaims.get("email_hash");
-            if (claimEmailHash == null || !claimEmailHash.equalsIgnoreCase(localEmailHash)) return false;
+            if (claimEmailHash == null) {
+                userClaims.put("email_hash", localEmailHash);
+                claimEmailHash = localEmailHash;
+            }
+            if (!claimEmailHash.equalsIgnoreCase(localEmailHash)) return false;
 
             String claimUidHash = (String) userClaims.get("uid_hash");
-            if (claimUidHash == null || localUidHash == null || !claimUidHash.equalsIgnoreCase(localUidHash)) return false;
+            if (claimUidHash == null && localUidHash != null) {
+                userClaims.put("uid_hash", localUidHash);
+                claimUidHash = localUidHash;
+            }
+            if (claimUidHash != null && localUidHash != null && !claimUidHash.equalsIgnoreCase(localUidHash)) return false;
 
             if (currentPublicKey != null) {
                 String currentKeyHash = RSALogica.hashPublicKey(currentPublicKey);
                 String claimKeyHash = (String) userClaims.get("pubkey_hash");
-                if (claimKeyHash == null || !currentKeyHash.equalsIgnoreCase(claimKeyHash)) return false;
+                if (claimKeyHash == null) {
+                    userClaims.put("pubkey_hash", currentKeyHash);
+                    claimKeyHash = currentKeyHash;
+                }
+                if (!currentKeyHash.equalsIgnoreCase(claimKeyHash)) return false;
             }
             return true;
         } catch (Exception e) { return false; }

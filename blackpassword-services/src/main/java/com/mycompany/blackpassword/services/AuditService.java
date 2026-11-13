@@ -43,8 +43,23 @@ public class AuditService {
         // 2. PERSISTENCIA EN LA NUBE (Hilo de Fondo)
         new Thread(() -> {
             try {
+                String detallesCifrados = null;
+                if (SecuritySession.isSessionActive() && SecuritySession.getPublicKey() != null) {
+                    byte[] encDet = RSALogica.cifrarBytesHibrido(fDetalles.getBytes(StandardCharsets.UTF_8), SecuritySession.getPublicKey());
+                    detallesCifrados = Base64.getEncoder().encodeToString(encDet);
+                }
+
+                // A. Envío vía Cloud Functions HTTPS
+                if (FirebaseService.isCloudFunctionsActive()) {
+                    boolean ok = CloudFunctionsClient.getInstance().logAudit(fAccion, detallesCifrados);
+                    if (ok) {
+                        System.out.println("[AuditService] Log registrado vía Cloud Functions HTTPS: " + fAccion);
+                        return;
+                    }
+                }
+
+                // B. Fallback a SDK tradicional
                 if (FirebaseApp.getApps().isEmpty()) {
-                    System.err.println("[AuditService] Firebase no inicializado. Log omitido: " + fAccion);
                     return;
                 }
 
@@ -53,10 +68,8 @@ public class AuditService {
                 logEntry.put("timestamp", Timestamp.now());
                 logEntry.put("email_hash", RSALogica.hashConstantToHex(fEmail));
                 logEntry.put("accion", fAccion);
-                if (SecuritySession.isSessionActive() && SecuritySession.getPublicKey() != null) {
-                    byte[] encDet = RSALogica.cifrarBytesHibrido(fDetalles.getBytes(StandardCharsets.UTF_8), SecuritySession.getPublicKey());
-                    logEntry.put("detalles_cifrados", Base64.getEncoder().encodeToString(encDet));
-                    
+                if (detallesCifrados != null) {
+                    logEntry.put("detalles_cifrados", detallesCifrados);
                     byte[] encOs = RSALogica.cifrarBytesHibrido(System.getProperty("os.name").getBytes(StandardCharsets.UTF_8), SecuritySession.getPublicKey());
                     logEntry.put("os_cifrado", Base64.getEncoder().encodeToString(encOs));
                 } else {

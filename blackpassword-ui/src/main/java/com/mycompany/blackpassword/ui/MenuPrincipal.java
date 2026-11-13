@@ -383,16 +383,10 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
     private void solicitarPinYAcceder(Class<?> claseVentana, String moduloDesc, String logPrefix, Runnable onSuccess) {
         validarIntegridadIdentidad(); 
 
-        JInternalFrame abierta = getVentanaAbierta();
+        JInternalFrame abierta = getVentanaAbierta(claseVentana);
         if (abierta != null) {
-            if (claseVentana != null && claseVentana.isInstance(abierta)) {
-                restaurarYTraerAlFrente(abierta);
-                ToastNotification.show(this, "El módulo '" + moduloDesc + "' ya se encuentra abierto.", ToastNotification.Type.INFO);
-            } else {
-                String titulo = getTituloVentana(abierta);
-                ToastNotification.show(this, "Debe cerrar la ventana actual ('" + titulo + "') antes de abrir " + moduloDesc + ".", ToastNotification.Type.WARNING);
-                restaurarYTraerAlFrente(abierta);
-            }
+            restaurarYTraerAlFrente(abierta);
+            ToastNotification.show(this, "El módulo '" + moduloDesc + "' ya se encuentra abierto.", ToastNotification.Type.INFO);
             return;
         }
 
@@ -418,16 +412,11 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
     }
 
     private void abrirVentanaUnica(Class<?> claseVentana, java.util.function.Supplier<JInternalFrame> creador) {
-        JInternalFrame abierta = getVentanaAbierta();
+        JInternalFrame abierta = getVentanaAbierta(claseVentana);
         if (abierta != null) {
-            if (claseVentana != null && claseVentana.isInstance(abierta)) {
-                restaurarYTraerAlFrente(abierta);
-                ToastNotification.show(this, "La ventana ya se encuentra abierta.", ToastNotification.Type.INFO);
-            } else {
-                String titulo = getTituloVentana(abierta);
-                ToastNotification.show(this, "Debe cerrar la ventana actual ('" + titulo + "') antes de abrir otro módulo.", ToastNotification.Type.WARNING);
-                restaurarYTraerAlFrente(abierta);
-            }
+            String titulo = getTituloVentana(abierta);
+            restaurarYTraerAlFrente(abierta);
+            ToastNotification.show(this, "La ventana '" + titulo + "' ya se encuentra abierta.", ToastNotification.Type.INFO);
             return;
         }
 
@@ -446,6 +435,8 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
             }
             
             nueva.setVisible(true);
+            nueva.toFront();
+            try { nueva.setSelected(true); } catch (Exception ignored) {}
             AnimationUtils.fadeInAndSlide(nueva, internalDesktop);
         } catch (Exception e) {
             e.printStackTrace();
@@ -453,9 +444,10 @@ public class MenuPrincipal extends javax.swing.JInternalFrame {
         }
     }
 
-    private JInternalFrame getVentanaAbierta() {
+    private JInternalFrame getVentanaAbierta(Class<?> claseVentana) {
+        if (claseVentana == null) return null;
         for (JInternalFrame f : internalDesktop.getAllFrames()) {
-            if (f != null && f.isVisible() && !f.isClosed()) {
+            if (f != null && f.isVisible() && !f.isClosed() && claseVentana.isInstance(f)) {
                 return f;
             }
         }

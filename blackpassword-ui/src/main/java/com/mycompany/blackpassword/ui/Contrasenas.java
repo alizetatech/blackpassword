@@ -103,7 +103,7 @@ public class Contrasenas extends javax.swing.JInternalFrame {
     private List<Map<String, Object>> secretDocumentsRaw = new ArrayList<>();
 
     public Contrasenas(String email) {
-        super("Bóveda de Seguridad", false, false, false, false);
+        super("Bóveda de Seguridad", true, true, true, true);
         this.userEmail = email;
         this.privacyModeActive = false;
         this.hideServices = true;

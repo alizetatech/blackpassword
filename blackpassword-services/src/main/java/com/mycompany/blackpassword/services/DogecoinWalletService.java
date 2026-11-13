@@ -230,7 +230,17 @@ public class DogecoinWalletService {
     public static boolean existeBilletera(String userEmail, boolean testnet) {
         if (userEmail == null || userEmail.isEmpty()) return false;
 
-        // 1. Comprobar en Firebase Cloud Firestore
+        // 1. Comprobar vía Cloud Functions HTTPS
+        if (FirebaseService.isCloudFunctionsActive()) {
+            try {
+                com.google.gson.JsonObject walletJson = CloudFunctionsClient.getInstance().getWallet("DOGE", testnet ? "testnet" : "mainnet", userEmail);
+                if (walletJson != null && walletJson.has("payload_cifrado") && !walletJson.get("payload_cifrado").getAsString().isEmpty()) {
+                    return true;
+                }
+            } catch (Throwable ignored) {}
+        }
+
+        // 2. Comprobar en Firebase Cloud Firestore
         try {
             Firestore db = FirebaseService.getFirestore();
             if (db != null) {
@@ -244,7 +254,7 @@ public class DogecoinWalletService {
             }
         } catch (Throwable ignored) {}
 
-        // 2. Comprobar en BD Local SQLite
+        // 3. Comprobar en BD Local SQLite
         return LocalDatabaseService.existeDogeWalletActiva(userEmail, testnet);
     }
 
@@ -271,6 +281,18 @@ public class DogecoinWalletService {
         }
 
         String encoded = java.util.Base64.getEncoder().encodeToString(finalPayload);
+
+        // Guardar vía Cloud Functions HTTPS
+        if (FirebaseService.isCloudFunctionsActive()) {
+            try {
+                boolean ok = CloudFunctionsClient.getInstance().saveWallet("DOGE", testnet ? "testnet" : "mainnet", encoded, userEmail);
+                if (ok) {
+                    System.out.println("[DogecoinWalletService] Billetera Doge guardada vía Cloud Functions HTTPS (" + (testnet ? "TESTNET" : "MAINNET") + ")");
+                }
+            } catch (Throwable t) {
+                System.err.println("[DogecoinWalletService] Error guardando vía Cloud Functions: " + t.getMessage());
+            }
+        }
 
         // Guardar exclusivamente en Firebase Cloud Firestore (Zero-Disk)
         try {
@@ -299,23 +321,41 @@ public class DogecoinWalletService {
         String key = userEmail.trim().toLowerCase() + (testnet ? "_doge_testnet" : "_doge_mainnet");
         String encoded = null;
 
-        // Cargar desde Firebase Cloud Firestore
-        try {
-            Firestore db = FirebaseService.getFirestore();
-            if (db != null) {
-                String path = getDogeFirestorePath(userEmail);
-                String docId = testnet ? "testnet" : "mainnet";
-                var docSnap = db.collection(path).document(docId).get().get();
-                if (docSnap.exists()) {
-                    String cloudPayload = docSnap.getString("payload_cifrado");
+        // 1. Cargar vía Cloud Functions HTTPS
+        if (FirebaseService.isCloudFunctionsActive()) {
+            try {
+                com.google.gson.JsonObject walletJson = CloudFunctionsClient.getInstance().getWallet("DOGE", testnet ? "testnet" : "mainnet", userEmail);
+                if (walletJson != null && walletJson.has("payload_cifrado")) {
+                    String cloudPayload = walletJson.get("payload_cifrado").getAsString();
                     if (cloudPayload != null && !cloudPayload.isEmpty()) {
                         encoded = cloudPayload;
-                        System.out.println("[DogecoinWalletService] Billetera cargada desde Firebase Cloud Firestore.");
+                        System.out.println("[DogecoinWalletService] Billetera Doge cargada vía Cloud Functions HTTPS.");
                     }
                 }
+            } catch (Throwable t) {
+                System.err.println("[DogecoinWalletService] Aviso Cloud Functions: " + t.getMessage());
             }
-        } catch (Throwable t) {
-            System.err.println("[DogecoinWalletService] Error conectando con Firebase Cloud: " + t.getMessage());
+        }
+
+        // 2. Cargar desde Firebase Cloud Firestore tradicional
+        if (encoded == null || encoded.isEmpty()) {
+            try {
+                Firestore db = FirebaseService.getFirestore();
+                if (db != null) {
+                    String path = getDogeFirestorePath(userEmail);
+                    String docId = testnet ? "testnet" : "mainnet";
+                    var docSnap = db.collection(path).document(docId).get().get();
+                    if (docSnap.exists()) {
+                        String cloudPayload = docSnap.getString("payload_cifrado");
+                        if (cloudPayload != null && !cloudPayload.isEmpty()) {
+                            encoded = cloudPayload;
+                            System.out.println("[DogecoinWalletService] Billetera cargada desde Firebase Cloud Firestore.");
+                        }
+                    }
+                }
+            } catch (Throwable t) {
+                System.err.println("[DogecoinWalletService] Error conectando con Firebase Cloud: " + t.getMessage());
+            }
         }
 
         if (encoded == null || encoded.isEmpty()) {

@@ -4,6 +4,7 @@ import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.google.cloud.firestore.Firestore;
 import com.mycompany.blackpassword.services.AuditService;
+import com.mycompany.blackpassword.services.CloudFunctionsClient;
 import com.mycompany.blackpassword.services.FirebaseService;
 import com.mycompany.blackpassword.crypto.RSALogica;
 import com.mycompany.blackpassword.services.SecuritySession;
@@ -38,7 +39,7 @@ public class Archivos extends javax.swing.JInternalFrame {
     private JLabel lblTitulo;
 
     public Archivos(String email) {
-        super("Gestor de Archivos Blindados", false, false, false, false);
+        super("Gestor de Archivos Blindados", true, true, true, true);
         this.userEmail = email;
         validarIntegridad();
         
@@ -266,7 +267,47 @@ public class Archivos extends javax.swing.JInternalFrame {
         model.setRowCount(0);
         new Thread(() -> {
             try {
+                if (FirebaseService.isCloudFunctionsActive()) {
+                    var items = CloudFunctionsClient.getInstance().listFiles(userEmail);
+                    for (var el : items) {
+                        if (!el.isJsonObject()) continue;
+                        var obj = el.getAsJsonObject();
+                        String id = obj.has("id") ? obj.get("id").getAsString() : "";
+                        String metaCifrada = obj.has("metadata_cifrada") ? obj.get("metadata_cifrada").getAsString() : null;
+                        String nombre = "N/A", carpeta = "N/A", fecha = "N/A";
+                        if (metaCifrada != null) {
+                            try {
+                                byte[] dec = RSALogica.descifrarBytesHibrido(Base64.getDecoder().decode(metaCifrada), SecuritySession.getPrivateKey());
+                                String meta = new String(dec, StandardCharsets.UTF_8);
+                                Arrays.fill(dec, (byte) 0);
+                                int cIdx = meta.indexOf("|c:");
+                                int rIdx = meta.indexOf("|r:", cIdx >= 0 ? cIdx : 0);
+                                if (meta.startsWith("n:") && cIdx >= 2) {
+                                    nombre = meta.substring(2, cIdx);
+                                    carpeta = (rIdx > cIdx) ? meta.substring(cIdx + 3, rIdx) : meta.substring(cIdx + 3);
+                                } else {
+                                    for (String p : meta.split("\\|")) {
+                                        if (p.startsWith("n:")) nombre = p.substring(2);
+                                        if (p.startsWith("c:")) carpeta = p.substring(2);
+                                    }
+                                }
+                            } catch (Exception e) { nombre = "[Error]"; }
+                        }
+                        if (obj.has("fecha") && !obj.get("fecha").isJsonNull()) {
+                            fecha = "Sincronizado";
+                        }
+                        String finalN = nombre, finalC = carpeta, finalF = fecha;
+                        java.awt.EventQueue.invokeLater(() -> model.addRow(new Object[]{finalN, finalC, finalF, id}));
+                    }
+                    java.awt.EventQueue.invokeLater(() -> {
+                        table.getColumnModel().getColumn(3).setMinWidth(0);
+                        table.getColumnModel().getColumn(3).setMaxWidth(0);
+                    });
+                    return;
+                }
+
                 Firestore db = FirebaseService.getFirestore();
+                if (db == null) return;
                 char[] emailChars = userEmail.toCharArray();
                 char[] hashChars = RSALogica.hashToHex(emailChars, null);
                 String emailHash = new String(hashChars);
@@ -326,6 +367,29 @@ public class Archivos extends javax.swing.JInternalFrame {
         if (nombre.isEmpty()) return;
         new Thread(() -> {
             try {
+                String metadata = "n:" + nombre + "|c:" + carpeta + "|r:" + txtRecordatorio.getText();
+                byte[] encMeta = RSALogica.cifrarBytesHibrido(metadata.getBytes(StandardCharsets.UTF_8), SecuritySession.getPublicKey());
+                String encMetaB64 = Base64.getEncoder().encodeToString(encMeta);
+
+                if (FirebaseService.isCloudFunctionsActive()) {
+                    String encBytesB64 = null;
+                    if (idDocumentoEdicion == null) {
+                        if (archivoSeleccionado == null) return;
+                        byte[] encBytes = RSALogica.cifrarBytesHibrido(Files.readAllBytes(archivoSeleccionado.toPath()), SecuritySession.getPublicKey());
+                        encBytesB64 = Base64.getEncoder().encodeToString(java.util.Objects.requireNonNull(encBytes));
+                    }
+                    boolean ok = CloudFunctionsClient.getInstance().saveFile(idDocumentoEdicion, encMetaB64, encBytesB64, userEmail);
+                    if (ok) {
+                        java.awt.EventQueue.invokeLater(() -> {
+                            resetForm(); cargarArchivosDesdeFirebase();
+                            ToastNotification.show(this, "Operación exitosa", ToastNotification.Type.SUCCESS);
+                        });
+                    } else {
+                        java.awt.EventQueue.invokeLater(() -> JOptionPane.showMessageDialog(this, "Error al guardar archivo en la nube."));
+                    }
+                    return;
+                }
+
                 final Firestore db = java.util.Objects.requireNonNull(FirebaseService.getFirestore());
                 
                 char[] emailChars = userEmail.toCharArray();
@@ -335,11 +399,9 @@ public class Archivos extends javax.swing.JInternalFrame {
                 com.mycompany.blackpassword.crypto.SecureCharArray.clear(hashChars);
                 
                 final String path = RSALogica.hashConstantToHex("usuarios") + "/" + emailHash + "/" + RSALogica.hashConstantToHex("archivos");
-                String metadata = "n:" + nombre + "|c:" + carpeta + "|r:" + txtRecordatorio.getText();
-                byte[] encMeta = RSALogica.cifrarBytesHibrido(metadata.getBytes(StandardCharsets.UTF_8), SecuritySession.getPublicKey());
                 
                 Map<String, Object> data = new HashMap<>();
-                data.put("metadata_cifrada", Base64.getEncoder().encodeToString(encMeta));
+                data.put("metadata_cifrada", encMetaB64);
 
                 if (idDocumentoEdicion == null) {
                     if (archivoSeleccionado == null) return;
@@ -385,7 +447,36 @@ public class Archivos extends javax.swing.JInternalFrame {
 
         try {
             String docId = model.getValueAt(table.convertRowIndexToModel(fila), 3).toString();
+
+            if (FirebaseService.isCloudFunctionsActive()) {
+                var fileObj = CloudFunctionsClient.getInstance().getFile(docId, userEmail);
+                if (fileObj != null && fileObj.has("metadata_cifrada") && !fileObj.get("metadata_cifrada").isJsonNull()) {
+                    byte[] dec = RSALogica.descifrarBytesHibrido(Base64.getDecoder().decode(fileObj.get("metadata_cifrada").getAsString()), SecuritySession.getPrivateKey());
+                    String meta = new String(dec, StandardCharsets.UTF_8);
+                    java.util.Arrays.fill(dec, (byte) 0);
+                    int cIdx = meta.indexOf("|c:");
+                    int rIdx = meta.indexOf("|r:", cIdx >= 0 ? cIdx : 0);
+                    if (meta.startsWith("n:") && cIdx >= 2 && rIdx > cIdx) {
+                        txtNombre.setText(meta.substring(2, cIdx));
+                        txtCarpeta.setText(meta.substring(cIdx + 3, rIdx));
+                        txtRecordatorio.setText(meta.substring(rIdx + 3));
+                    } else {
+                        for (String p : meta.split("\\|")) {
+                            if (p.startsWith("n:")) txtNombre.setText(p.substring(2));
+                            if (p.startsWith("c:")) txtCarpeta.setText(p.substring(2));
+                            if (p.startsWith("r:")) txtRecordatorio.setText(p.substring(2));
+                        }
+                    }
+                }
+                idDocumentoEdicion = docId;
+                btnSubir.setText("ACTUALIZAR");
+                btnCancelar.setVisible(true);
+                btnSeleccionar.setEnabled(false);
+                return;
+            }
+
             Firestore db = FirebaseService.getFirestore();
+            if (db == null) return;
             
             char[] emailChars = userEmail.toCharArray();
             char[] hashChars = RSALogica.hashToHex(emailChars, null);
@@ -435,7 +526,29 @@ public class Archivos extends javax.swing.JInternalFrame {
                 new Thread(() -> {
                     try {
                         String docId = model.getValueAt(modelRow, 3).toString();
-                        
+
+                        if (FirebaseService.isCloudFunctionsActive()) {
+                            var fileObj = CloudFunctionsClient.getInstance().getFile(docId, userEmail);
+                            if (fileObj != null && fileObj.has("contenido_cifrado") && !fileObj.get("contenido_cifrado").isJsonNull()) {
+                                byte[] dec = RSALogica.descifrarBytesHibrido(Base64.getDecoder().decode(fileObj.get("contenido_cifrado").getAsString()), SecuritySession.getPrivateKey());
+                                java.awt.EventQueue.invokeLater(() -> {
+                                    try {
+                                        JFileChooser fc = new JFileChooser();
+                                        fc.setSelectedFile(new File(nombreArchivo));
+                                        if (fc.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
+                                            Files.write(fc.getSelectedFile().toPath(), dec);
+                                            ToastNotification.show(this, "Archivo recuperado", ToastNotification.Type.SUCCESS);
+                                        }
+                                    } catch (Exception e) {
+                                        e.printStackTrace();
+                                    } finally {
+                                        java.util.Arrays.fill(dec, (byte) 0);
+                                    }
+                                });
+                            }
+                            return;
+                        }
+
                         char[] emailChars = userEmail.toCharArray();
                         char[] hashChars = RSALogica.hashToHex(emailChars, null);
                         String emailHash = new String(hashChars);
@@ -502,7 +615,22 @@ public class Archivos extends javax.swing.JInternalFrame {
         new Thread(() -> {
             try {
                 String docId = model.getValueAt(modelRow, 3).toString();
-                
+
+                if (FirebaseService.isCloudFunctionsActive()) {
+                    boolean ok = CloudFunctionsClient.getInstance().deleteFile(docId, userEmail);
+                    AuditService.log(userEmail, "FILE_DELETE", "Archivo eliminado: " + nombreArchivo);
+                    java.awt.EventQueue.invokeLater(() -> {
+                        if (ok) {
+                            ToastNotification.show(this, "Archivo eliminado correctamente.", ToastNotification.Type.SUCCESS);
+                            cargarArchivosDesdeFirebase();
+                            resetForm();
+                        } else {
+                            ToastNotification.show(this, "Error al eliminar el archivo.", ToastNotification.Type.ERROR);
+                        }
+                    });
+                    return;
+                }
+
                 char[] emailChars = userEmail.toCharArray();
                 char[] hashChars = RSALogica.hashToHex(emailChars, null);
                 String emailHash = new String(hashChars);

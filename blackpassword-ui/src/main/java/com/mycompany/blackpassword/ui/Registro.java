@@ -2,8 +2,10 @@ package com.mycompany.blackpassword.ui;
 
 import com.formdev.flatlaf.FlatClientProperties;
 import com.google.cloud.firestore.Firestore;
+import com.google.gson.JsonObject;
 import com.google.firebase.auth.UserRecord;
 import com.mycompany.blackpassword.services.CertificateService;
+import com.mycompany.blackpassword.services.CloudFunctionsClient;
 import com.mycompany.blackpassword.services.FirebaseService;
 import com.mycompany.blackpassword.services.SecuritySession;
 import com.mycompany.blackpassword.services.SeedPhraseManager;
@@ -257,6 +259,52 @@ public class Registro extends javax.swing.JInternalFrame {
             String hashedSeed = RSALogica.hashSHA256(seedChars, userSalt);
             String hashedPin = RSALogica.hashSHA256(pin, userSalt);
             
+            String certBase64 = CertificateService.generateSSLCertificate(
+                nombre + " " + apellido, 
+                correo, 
+                SecuritySession.getPublicKey(), 
+                SecuritySession.getPrivateKey()
+            );
+            String encryptedCert = CertificateService.encryptCertificate(certBase64, SecuritySession.getPublicKey());
+
+            String payload = "hash:" + hashedPass + "|seed_hash:" + hashedSeed + "|correo:" + correo + "|nombre:" + nombre + "|apellido:" + apellido;
+            byte[] encryptedPayload = RSALogica.cifrarBytesHibrido(payload.getBytes(StandardCharsets.UTF_8), SecuritySession.getPublicKey());
+            String payloadBase64 = Base64.getEncoder().encodeToString(encryptedPayload);
+
+            if (FirebaseService.isCloudFunctionsActive()) {
+                CloudFunctionsClient client = FirebaseService.getCloudFunctionsClient();
+                boolean created = client.signUp(correo, new String(pass));
+                if (!created) {
+                    JOptionPane.showMessageDialog(this, "Error al crear la cuenta en Firebase Auth.\nVerifique que el correo no esté ya registrado.", "Error de Registro", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+
+                SecureCharArray.clear(pass);
+                SecureCharArray.clear(pin);
+                SecureCharArray.clear(seedChars);
+
+                JsonObject profileData = new JsonObject();
+                profileData.addProperty("uid_hash", RSALogica.hashConstantToHex(client.getUserUid()));
+                profileData.addProperty("perfil_cifrado", payloadBase64);
+                profileData.addProperty("certificado_digital", encryptedCert);
+                profileData.addProperty("user_salt", Base64.getEncoder().encodeToString(userSalt));
+                profileData.addProperty("pin_hash", hashedPin);
+                profileData.addProperty("typing_profile", typingProfile);
+                profileData.addProperty("pubkey_hash", RSALogica.hashPublicKey(SecuritySession.getPublicKey()));
+                profileData.addProperty("email", correo);
+
+                boolean saved = client.registerProfile(profileData);
+                if (!saved) {
+                    JOptionPane.showMessageDialog(this, "Error al guardar el perfil en Cloud Functions.", "Error", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+
+                JOptionPane.showMessageDialog(this, "¡Registro Exitoso!\nSu identidad SSL ha sido certificada.", "Seguridad Máxima", JOptionPane.INFORMATION_MESSAGE);
+                this.dispose();
+                return;
+            }
+
+            // Fallback Legacy con Service Account Admin SDK
             UserRecord.CreateRequest request = new UserRecord.CreateRequest()
                 .setEmail(correo)
                 .setPassword(new String(pass))
@@ -278,18 +326,6 @@ public class Registro extends javax.swing.JInternalFrame {
             claims.put("pubkey_hash", RSALogica.hashPublicKey(SecuritySession.getPublicKey())); 
             FirebaseService.setCustomClaims(userRecord.getUid(), claims);
             // ----------------------------------------------------
-
-            String certBase64 = CertificateService.generateSSLCertificate(
-                nombre + " " + apellido, 
-                correo, 
-                SecuritySession.getPublicKey(), 
-                SecuritySession.getPrivateKey()
-            );
-            String encryptedCert = CertificateService.encryptCertificate(certBase64, SecuritySession.getPublicKey());
-
-            String payload = "hash:" + hashedPass + "|seed_hash:" + hashedSeed + "|correo:" + correo + "|nombre:" + nombre + "|apellido:" + apellido;
-            byte[] encryptedPayload = RSALogica.cifrarBytesHibrido(payload.getBytes(StandardCharsets.UTF_8), SecuritySession.getPublicKey());
-            String payloadBase64 = Base64.getEncoder().encodeToString(encryptedPayload);
 
             Firestore db = FirebaseService.getFirestore();
             Map<String, Object> datos = new HashMap<>();

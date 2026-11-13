@@ -50,11 +50,27 @@ public class IdentidadDigital extends javax.swing.JInternalFrame {
 
     private void cargarCertificadoSSL() {
         try {
-            Firestore db = FirebaseService.getFirestore();
-            String docId = RSALogica.hashConstantToHex(userEmail);
-            var doc = db.collection(java.util.Objects.requireNonNull(RSALogica.hashConstantToHex("usuarios")))
-                        .document(java.util.Objects.requireNonNull(docId)).get().get();
-            
+            String encCert = null;
+            if (FirebaseService.isCloudFunctionsActive()) {
+                var resp = FirebaseService.getCloudFunctionsClient().getProfile(userEmail);
+                if (resp != null && resp.has("profile")) {
+                    var p = resp.getAsJsonObject("profile");
+                    if (p.has("certificado_digital")) {
+                        encCert = p.get("certificado_digital").getAsString();
+                    }
+                }
+            } else {
+                Firestore db = FirebaseService.getFirestore();
+                if (db != null) {
+                    String docId = RSALogica.hashConstantToHex(userEmail);
+                    var doc = db.collection(java.util.Objects.requireNonNull(RSALogica.hashConstantToHex("usuarios")))
+                                .document(java.util.Objects.requireNonNull(docId)).get().get();
+                    if (doc.exists() && doc.contains("certificado_digital")) {
+                        encCert = doc.getString("certificado_digital");
+                    }
+                }
+            }
+
             StringBuilder sb = new StringBuilder();
             
             // --- SECCIÓN 1: VALIDACIÓN DE IDENTIDAD CRUZADA ---
@@ -102,8 +118,7 @@ public class IdentidadDigital extends javax.swing.JInternalFrame {
             }
 
             // --- SECCIÓN 2: CERTIFICADO SSL ---
-            if (doc.exists() && doc.contains("certificado_digital")) {
-                String encCert = doc.getString("certificado_digital");
+            if (encCert != null && !encCert.isEmpty()) {
                 byte[] decBytes = RSALogica.descifrarBytesHibrido(Base64.getDecoder().decode(encCert), SecuritySession.getPrivateKey());
                 String certBase64 = new String(decBytes, StandardCharsets.UTF_8);
                 

@@ -1,6 +1,9 @@
 package com.mycompany.blackpassword.ui;
 
 import com.formdev.flatlaf.FlatClientProperties;
+import com.google.gson.JsonObject;
+import com.google.gson.Gson;
+import com.mycompany.blackpassword.services.CloudFunctionsClient;
 import com.mycompany.blackpassword.services.AuditService;
 import com.mycompany.blackpassword.services.FirebaseService;
 import com.mycompany.blackpassword.services.LocationService;
@@ -164,6 +167,145 @@ public class InicioSesion extends javax.swing.JInternalFrame {
         if (correo.isEmpty() || pass.length == 0) return;
 
         try {
+            // --- MODO CLOUD FUNCTIONS HTTPS ZERO-ADMIN-SDK ---
+            if (FirebaseService.isCloudFunctionsActive()) {
+                CloudFunctionsClient client = FirebaseService.getCloudFunctionsClient();
+                boolean authOk = client.signIn(correo, new String(pass));
+                if (!authOk) {
+                    com.mycompany.blackpassword.services.IntrusionService.reportFailure(correo, "LOGIN_FIREBASE_AUTH");
+                    JOptionPane.showMessageDialog(this, "❌ Credenciales incorrectas o usuario no registrado.", "Error de Autenticación", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+
+                JsonObject resp = client.getProfile(correo);
+                if (resp == null || !resp.has("profile")) {
+                    JOptionPane.showMessageDialog(this, "❌ Perfil no encontrado en el servidor.\nVerifique su conexión o credenciales.", "Error de Identidad", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+
+                JsonObject userDoc = resp.getAsJsonObject("profile");
+                String docPath = getJsonString(resp, "docPath");
+
+                String pinHash = getJsonString(userDoc, "pin_hash");
+                if (pinHash == null) pinHash = getJsonString(userDoc, "codigopin");
+
+                String dbUidHash = getJsonString(userDoc, "uid_hash");
+                if (dbUidHash == null) dbUidHash = client.getUserUid();
+
+                String storedTypingProfile = getJsonString(userDoc, "typing_profile");
+                if (storedTypingProfile == null) storedTypingProfile = "";
+
+                String lastLocation = "N/A";
+                String lastLocCifrada = getJsonString(userDoc, "last_location_cifrada");
+                if (lastLocCifrada != null) {
+                    try {
+                        byte[] encLoc = Base64.getDecoder().decode(lastLocCifrada);
+                        lastLocation = new String(RSALogica.descifrarBytesHibrido(encLoc, SecuritySession.getPrivateKey()), StandardCharsets.UTF_8);
+                    } catch (Exception ignored) {}
+                } else {
+                    String ll = getJsonString(userDoc, "last_location");
+                    if (ll != null) lastLocation = ll;
+                }
+
+                String perfilCifradoStr = getJsonString(userDoc, "perfil_cifrado");
+                if (perfilCifradoStr == null || perfilCifradoStr.isEmpty()) {
+                    JOptionPane.showMessageDialog(this, "❌ Perfil cifrado ausente en el servidor.", "Error de Integridad", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+
+                byte[] perfilCifrado = Base64.getDecoder().decode(perfilCifradoStr);
+                byte[] perfilDescifradoBytes = RSALogica.descifrarBytesHibrido(perfilCifrado, SecuritySession.getPrivateKey());
+
+                if (pinHash == null || pinHash.isEmpty()) {
+                    pinHash = RSALogica.hashConstantToHex("DEFAULT_PIN");
+                }
+
+                String storedHash = "", nombre = "Usuario";
+                int start = 0;
+                for (int i = 0; i <= perfilDescifradoBytes.length; i++) {
+                    if (i == perfilDescifradoBytes.length || perfilDescifradoBytes[i] == '|') {
+                        int len = i - start;
+                        if (len > 0) {
+                            String segment = new String(perfilDescifradoBytes, start, len).trim();
+                            if (segment.startsWith("hash:")) storedHash = segment.substring(5);
+                            if (segment.startsWith("nombre:")) nombre = segment.substring(7);
+                        }
+                        start = i + 1;
+                    }
+                }
+                Arrays.fill(perfilDescifradoBytes, (byte) 0);
+
+                String userSaltBase64 = userDoc.has("user_salt") ? userDoc.get("user_salt").getAsString() : null;
+                byte[] userSalt = (userSaltBase64 != null) ? Base64.getDecoder().decode(userSaltBase64) : null;
+
+                String hashPass;
+                if (userSalt != null) {
+                    hashPass = RSALogica.hashSHA256(pass, userSalt);
+                } else {
+                    hashPass = RSALogica.hashSHA256(pass, RSALogica.getUniversalSalt().getBytes(StandardCharsets.UTF_8));
+                }
+
+                byte[] computedPassBytes = hashPass.toLowerCase().getBytes(StandardCharsets.UTF_8);
+                byte[] storedPassBytes = storedHash.toLowerCase().getBytes(StandardCharsets.UTF_8);
+
+                if (java.security.MessageDigest.isEqual(computedPassBytes, storedPassBytes)) {
+                    SecuritySession.setUserSalt(userSalt);
+                    SecuritySession.setUserPinHash(pinHash);
+
+                    String currentProfile = typingDNA.getTypingProfile();
+                    double similarity = TypingDNAManager.compareProfiles(currentProfile, storedTypingProfile);
+
+                    if (similarity < 15.0 && !currentProfile.equals("INSUFFICIENT_DATA")) {
+                        JPasswordField pfPin = new JPasswordField(4);
+                        Object[] msg = {"🛡️ VERIFICACIÓN BIOMÉTRICA FALLIDA\nConfirme con su PIN:", pfPin};
+
+                        if (JOptionPane.showConfirmDialog(this, msg, "Seguridad", JOptionPane.OK_CANCEL_OPTION) == JOptionPane.OK_OPTION) {
+                            if (!SecuritySession.verifyUserPin(pfPin.getPassword())) {
+                                com.mycompany.blackpassword.services.IntrusionService.reportFailure(correo, "LOGIN_BIOMETRIC_PIN");
+                                JOptionPane.showMessageDialog(this, "PIN incorrecto.", "Error", JOptionPane.ERROR_MESSAGE);
+                                return;
+                            }
+                            JsonObject up = new JsonObject();
+                            up.addProperty("typing_profile", currentProfile);
+                            client.updateProfile(up, docPath);
+                        } else return;
+                    }
+
+                    String currentLocation = LocationService.getLocationString();
+                    SecuritySession.setCurrentLocation(currentLocation);
+
+                    if (!lastLocation.equals("N/A") && !currentLocation.equals(lastLocation)) {
+                        AuditService.log(correo, "LOCATION_CHANGE", "Anterior: " + lastLocation + " | Actual: " + currentLocation);
+                    }
+
+                    JsonObject updates = new JsonObject();
+                    byte[] encLoc = RSALogica.cifrarBytesHibrido(currentLocation.getBytes(StandardCharsets.UTF_8), SecuritySession.getPublicKey());
+                    updates.addProperty("last_location_cifrada", Base64.getEncoder().encodeToString(encLoc));
+                    client.updateProfile(updates, docPath);
+
+                    SecuritySession.setLocalUidHash(dbUidHash);
+                    SecuritySession.setTypingProfile(currentProfile.equals("INSUFFICIENT_DATA") ? storedTypingProfile : currentProfile);
+
+                    char[] passForSession = pass.clone();
+                    SecuritySession.setKeySession(SecuritySession.getPublicKey(), SecuritySession.getPrivateKey(), passForSession);
+                    SecuritySession.setMasterPassword(pass);
+
+                    if (resp.has("customClaims") && resp.get("customClaims").isJsonObject()) {
+                        try {
+                            Map<String, Object> claims = new Gson().fromJson(resp.get("customClaims"), Map.class);
+                            SecuritySession.setUserClaims(claims);
+                        } catch (Exception ignored) {}
+                    }
+
+                    lanzarDashboardSeguro(nombre, correo);
+                    this.dispose();
+                } else {
+                    com.mycompany.blackpassword.services.IntrusionService.reportFailure(correo, "LOGIN_PASSWORD");
+                    JOptionPane.showMessageDialog(this, "❌ Contraseña incorrecta.", "Error", JOptionPane.ERROR_MESSAGE);
+                }
+                return;
+            }
+
             com.google.cloud.firestore.Firestore db = com.mycompany.blackpassword.services.FirebaseService.getFirestore();
             
             // Migración Nivel 11: Uso de constantes seguras para infraestructura
@@ -347,8 +489,30 @@ public class InicioSesion extends javax.swing.JInternalFrame {
         }
     }
 
+    private static String getJsonString(JsonObject obj, String key) {
+        if (obj != null && obj.has(key) && !obj.get(key).isJsonNull()) {
+            try {
+                return obj.get(key).getAsString();
+            } catch (Exception e) {
+                return null;
+            }
+        }
+        return null;
+    }
+
     private void btnRegistrarActionPerformed(java.awt.event.ActionEvent evt) {
-        Registro reg = new Registro(); this.getDesktopPane().add(reg); reg.setVisible(true);
+        javax.swing.JDesktopPane desktop = this.getDesktopPane();
+        if (desktop != null) {
+            for (javax.swing.JInternalFrame f : desktop.getAllFrames()) {
+                if (f instanceof Registro && f.isVisible() && !f.isClosed()) {
+                    try { if (f.isIcon()) f.setIcon(false); f.toFront(); f.setSelected(true); } catch (Exception ignored) {}
+                    return;
+                }
+            }
+            Registro reg = new Registro();
+            desktop.add(reg);
+            reg.setVisible(true);
+        }
     }
 
     private javax.swing.JButton btnEntrar;

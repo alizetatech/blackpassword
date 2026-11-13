@@ -19,6 +19,7 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Servicio de Túnel VPN WireGuard v1.1 - Zero-Disk Cloud Architecture.
@@ -204,21 +205,35 @@ public class WireguardService {
         }
 
         try {
+            WireguardProfile parsed = parseConfig(rawConfig, profileName);
+            byte[] plainBytes = rawConfig.getBytes(StandardCharsets.UTF_8);
+            byte[] encBytes = RSALogica.cifrarBytesHibrido(plainBytes, SecuritySession.getPublicKey());
+            Arrays.fill(plainBytes, (byte) 0);
+            String encB64 = Base64.getEncoder().encodeToString(encBytes);
+            String docId = RSALogica.hashConstantToHex(profileName.trim().toLowerCase());
+
+            // 1. Guardar vía Cloud Functions HTTPS
+            if (FirebaseService.isCloudFunctionsActive()) {
+                boolean ok = CloudFunctionsClient.getInstance().saveWireguardProfile(
+                        docId, profileName.trim(), encB64, 
+                        parsed.address != null ? parsed.address : "", 
+                        parsed.endpoint != null ? parsed.endpoint : "",
+                        email
+                );
+                if (ok) {
+                    System.out.println("[WireguardService] Perfil '" + profileName + "' guardado vía Cloud Functions HTTPS.");
+                    return true;
+                }
+            }
+
+            // 2. Fallback a SDK tradicional
             Firestore db = FirebaseService.getFirestore();
             if (db == null) {
                 System.err.println("[WireguardService] Firestore no inicializado.");
                 return false;
             }
 
-            WireguardProfile parsed = parseConfig(rawConfig, profileName);
-            byte[] plainBytes = rawConfig.getBytes(StandardCharsets.UTF_8);
-            byte[] encBytes = RSALogica.cifrarBytesHibrido(plainBytes, SecuritySession.getPublicKey());
-            Arrays.fill(plainBytes, (byte) 0);
-            String encB64 = Base64.getEncoder().encodeToString(encBytes);
-
             String path = getWireguardCloudPath(email);
-            String docId = RSALogica.hashConstantToHex(profileName.trim().toLowerCase());
-
             Map<String, Object> data = new HashMap<>();
             data.put("nombre_perfil", profileName.trim());
             data.put("payload_cifrado", encB64);
@@ -242,6 +257,46 @@ public class WireguardService {
             return list;
         }
 
+        // 1. Cargar vía Cloud Functions HTTPS
+        if (FirebaseService.isCloudFunctionsActive()) {
+            try {
+                com.google.gson.JsonArray items = CloudFunctionsClient.getInstance().listWireguardProfiles(email);
+                for (com.google.gson.JsonElement el : items) {
+                    if (!el.isJsonObject()) continue;
+                    com.google.gson.JsonObject obj = el.getAsJsonObject();
+
+                    String encB64 = obj.has("payload_cifrado") ? obj.get("payload_cifrado").getAsString() : null;
+                    String name = obj.has("nombre_perfil") ? obj.get("nombre_perfil").getAsString() : "Perfil WireGuard";
+                    String id = obj.has("id") ? obj.get("id").getAsString() : UUID.randomUUID().toString();
+
+                    if (encB64 != null) {
+                        try {
+                            byte[] encBytes = Base64.getDecoder().decode(encB64);
+                            byte[] decBytes = RSALogica.descifrarBytesHibrido(encBytes, SecuritySession.getPrivateKey());
+                            String raw = new String(decBytes, StandardCharsets.UTF_8);
+                            Arrays.fill(decBytes, (byte) 0);
+
+                            WireguardProfile p = parseConfig(raw, name);
+                            p.id = id;
+                            if (obj.has("actualizado_en") && obj.get("actualizado_en").isJsonObject()) {
+                                p.timestamp = System.currentTimeMillis();
+                            }
+                            list.add(p);
+                        } catch (Exception ex) {
+                            System.err.println("[WireguardService] Error descifrando perfil " + id + ": " + ex.getMessage());
+                        }
+                    }
+                }
+                if (!list.isEmpty()) {
+                    System.out.println("[WireguardService] " + list.size() + " perfiles VPN cargados vía Cloud Functions HTTPS.");
+                    return list;
+                }
+            } catch (Exception cfEx) {
+                System.err.println("[WireguardService] Aviso: Fallo Cloud Functions HTTPS, probando fallback: " + cfEx.getMessage());
+            }
+        }
+
+        // 2. Fallback a SDK tradicional
         try {
             Firestore db = FirebaseService.getFirestore();
             if (db == null) return list;
@@ -286,6 +341,19 @@ public class WireguardService {
 
     public static boolean eliminarPerfilCloud(String email, String docId) {
         if (!SecuritySession.isIdentityValid(email)) return false;
+
+        // 1. Eliminar vía Cloud Functions HTTPS
+        if (FirebaseService.isCloudFunctionsActive()) {
+            try {
+                boolean ok = CloudFunctionsClient.getInstance().deleteWireguardProfile(docId, email);
+                if (ok) {
+                    System.out.println("[WireguardService] Perfil " + docId + " eliminado vía Cloud Functions HTTPS.");
+                    return true;
+                }
+            } catch (Exception ignored) {}
+        }
+
+        // 2. Fallback a SDK tradicional
         try {
             Firestore db = FirebaseService.getFirestore();
             if (db == null) return false;

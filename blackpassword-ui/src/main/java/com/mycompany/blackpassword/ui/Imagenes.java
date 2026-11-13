@@ -10,6 +10,7 @@ import com.google.cloud.firestore.QueryDocumentSnapshot;
 import com.google.cloud.firestore.QuerySnapshot;
 import com.google.cloud.storage.Blob;
 import com.mycompany.blackpassword.services.FirebaseService;
+import com.mycompany.blackpassword.services.CloudFunctionsClient;
 import com.mycompany.blackpassword.services.AuditService;
 import com.mycompany.blackpassword.crypto.RSALogica;
 import com.mycompany.blackpassword.crypto.SecureCharArray;
@@ -43,6 +44,8 @@ public class Imagenes extends javax.swing.JInternalFrame {
     private DefaultTableModel model;
     private TableRowSorter<DefaultTableModel> sorter;
     private final MenuPrincipal parentMenu;
+    private final Map<String, String> docStoragePaths = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, String[]> docMetaCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     private JTextField txtNombre, txtCarpeta, txtBuscar;
     private JTextArea txtRecordatorio;
@@ -51,7 +54,7 @@ public class Imagenes extends javax.swing.JInternalFrame {
     private JButton btnSubir, btnSeleccionar, btnCancelar, btnEditar, btnVer, btnDescargar, btnEliminar, btnVolver, btnRefresh;
 
     public Imagenes(String email, MenuPrincipal parentMenu) {
-        super("Galería de Imágenes Blindadas", false, false, false, false);
+        super("Galería de Imágenes Blindadas", true, true, true, true);
         this.userEmail = email;
         this.parentMenu = parentMenu;
         validarIntegridad();
@@ -289,9 +292,60 @@ public class Imagenes extends javax.swing.JInternalFrame {
     private void cargarImagenesDesdeFirebase() {
         validarIntegridad();
         model.setRowCount(0);
+        docStoragePaths.clear();
+        docMetaCache.clear();
         new Thread(() -> {
             try {
+                if (FirebaseService.isCloudFunctionsActive()) {
+                    var items = CloudFunctionsClient.getInstance().listImages(userEmail);
+                    for (var el : items) {
+                        if (!el.isJsonObject()) continue;
+                        var obj = el.getAsJsonObject();
+                        String id = obj.has("id") ? obj.get("id").getAsString() : "";
+                        String metaCifrada = obj.has("metadata_cifrada") ? obj.get("metadata_cifrada").getAsString() : null;
+                        String sp = obj.has("storage_path") ? obj.get("storage_path").getAsString() : "";
+                        if (!sp.isEmpty()) docStoragePaths.put(id, sp);
+
+                        String nombre = "[Sin Nombre]", carpeta = "General", rec = "";
+                        if (metaCifrada != null && !metaCifrada.isEmpty()) {
+                            try {
+                                byte[] dec = RSALogica.descifrarBytesHibrido(Base64.getDecoder().decode(metaCifrada), SecuritySession.getPrivateKey());
+                                String meta = new String(dec, StandardCharsets.UTF_8);
+                                java.util.Arrays.fill(dec, (byte) 0);
+                                int cIdx = meta.indexOf("|c:");
+                                int rIdx = meta.indexOf("|r:", cIdx >= 0 ? cIdx : 0);
+                                if (meta.startsWith("n:") && cIdx >= 2) {
+                                    nombre = meta.substring(2, cIdx);
+                                    if (rIdx > cIdx) {
+                                        carpeta = meta.substring(cIdx + 3, rIdx);
+                                        rec = meta.substring(rIdx + 3);
+                                    } else {
+                                        carpeta = meta.substring(cIdx + 3);
+                                    }
+                                } else {
+                                    for (String p : meta.split("\\|")) {
+                                        if (p.startsWith("n:")) nombre = p.substring(2);
+                                        if (p.startsWith("c:")) carpeta = p.substring(2);
+                                        if (p.startsWith("r:")) rec = p.substring(2);
+                                    }
+                                }
+                            } catch (Exception e) { nombre = "[Error]"; }
+                        } else if (!sp.isEmpty()) {
+                            nombre = sp.substring(sp.lastIndexOf('/') + 1);
+                        }
+                        docMetaCache.put(id, new String[]{nombre, carpeta, rec});
+                        String finalN = nombre, finalC = carpeta;
+                        java.awt.EventQueue.invokeLater(() -> model.addRow(new Object[]{finalN, finalC, id}));
+                    }
+                    java.awt.EventQueue.invokeLater(() -> {
+                        table.getColumnModel().getColumn(2).setMinWidth(0);
+                        table.getColumnModel().getColumn(2).setMaxWidth(0);
+                    });
+                    return;
+                }
+
                 Firestore db = FirebaseService.getFirestore();
+                if (db == null) return;
                 char[] emailChars = userEmail.toCharArray();
                 char[] emailHashChars = RSALogica.hashToHex(emailChars, null);
                 String emailHash = new String(emailHashChars);
@@ -357,11 +411,35 @@ public class Imagenes extends javax.swing.JInternalFrame {
             try {
                 String metadata = "n:" + nombre + "|c:" + txtCarpeta.getText() + "|r:" + txtRecordatorio.getText();
                 byte[] encMeta = RSALogica.cifrarBytesHibrido(metadata.getBytes(StandardCharsets.UTF_8), SecuritySession.getPublicKey());
+                String encMetaB64 = Base64.getEncoder().encodeToString(encMeta);
+
+                if (FirebaseService.isCloudFunctionsActive()) {
+                    String imageBytesB64 = null;
+                    if (idDocumentoEdicion == null) {
+                        byte[] fileBytes = Files.readAllBytes(archivoSeleccionado.toPath());
+                        byte[] encryptedBytes = RSALogica.cifrarBytesHibrido(fileBytes, SecuritySession.getPublicKey());
+                        imageBytesB64 = Base64.getEncoder().encodeToString(encryptedBytes);
+                    }
+                    boolean ok = CloudFunctionsClient.getInstance().saveImage(idDocumentoEdicion, encMetaB64, imageBytesB64, null, userEmail);
+                    if (ok) {
+                        java.awt.EventQueue.invokeLater(() -> {
+                            resetForm(); cargarImagenesDesdeFirebase();
+                            ToastNotification.show(this, "Conexión establecida con éxito.", ToastNotification.Type.SUCCESS);
+                        });
+                    } else {
+                        java.awt.EventQueue.invokeLater(() -> {
+                            ToastNotification.show(this, "Error al guardar imagen en la nube.", ToastNotification.Type.ERROR);
+                        });
+                    }
+                    return;
+                }
+
                 Map<String, Object> docData = new HashMap<>();
-                docData.put("metadata_cifrada", Base64.getEncoder().encodeToString(encMeta));
+                docData.put("metadata_cifrada", encMetaB64);
                 docData.put("timestamp", Timestamp.now());
 
                 Firestore db = FirebaseService.getFirestore();
+                if (db == null) return;
                 String collectionPath = getHashedUserPath();
 
                 if (idDocumentoEdicion == null) {
@@ -417,7 +495,24 @@ public class Imagenes extends javax.swing.JInternalFrame {
 
         try {
             String docId = model.getValueAt(table.convertRowIndexToModel(fila), 2).toString();
+
+            if (FirebaseService.isCloudFunctionsActive()) {
+                String[] cached = docMetaCache.get(docId);
+                if (cached != null) {
+                    txtNombre.setText(cached[0]);
+                    txtCarpeta.setText(cached[1]);
+                    txtRecordatorio.setText(cached[2]);
+                }
+                idDocumentoEdicion = docId;
+                btnSubir.setText("ACTUALIZAR");
+                btnCancelar.setVisible(true);
+                btnSeleccionar.setEnabled(false);
+                lblPreview.setIcon(null); lblPreview.setText("[Nube]");
+                return;
+            }
+
             Firestore db = FirebaseService.getFirestore();
+            if (db == null) return;
             String path = getHashedUserPath();
             var docFuture = db.collection(Objects.requireNonNull(path)).document(Objects.requireNonNull(docId)).get();
             var doc = docFuture.get();
@@ -478,9 +573,17 @@ public class Imagenes extends javax.swing.JInternalFrame {
             byte[] dec = null;
             try {
                 String docId = model.getValueAt(modelRow, 2).toString();
-                String storagePath = getStoragePath(docId);
-                Blob blob = FirebaseService.getStorageBucket().get(storagePath);
-                dec = RSALogica.descifrarBytesHibrido(blob.getContent(), SecuritySession.getPrivateKey());
+                byte[] encBytes;
+                if (FirebaseService.isCloudFunctionsActive()) {
+                    String storagePath = getStoragePath(docId);
+                    encBytes = CloudFunctionsClient.getInstance().getImageContent(storagePath);
+                    if (encBytes == null) throw new Exception("No se pudo obtener el contenido cifrado de la imagen.");
+                } else {
+                    String storagePath = getStoragePath(docId);
+                    Blob blob = FirebaseService.getStorageBucket().get(storagePath);
+                    encBytes = blob.getContent();
+                }
+                dec = RSALogica.descifrarBytesHibrido(encBytes, SecuritySession.getPrivateKey());
                 final Image img = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(dec));
                 
                 java.awt.EventQueue.invokeLater(() -> {
@@ -509,8 +612,16 @@ public class Imagenes extends javax.swing.JInternalFrame {
         new Thread(() -> {
             try {
                 String docId = model.getValueAt(modelRow, 2).toString();
-                Blob blob = FirebaseService.getStorageBucket().get(getStoragePath(docId));
-                byte[] dec = RSALogica.descifrarBytesHibrido(blob.getContent(), SecuritySession.getPrivateKey());
+                byte[] encBytes;
+                if (FirebaseService.isCloudFunctionsActive()) {
+                    String storagePath = getStoragePath(docId);
+                    encBytes = CloudFunctionsClient.getInstance().getImageContent(storagePath);
+                    if (encBytes == null) throw new Exception("No se pudo descargar la imagen cifrada.");
+                } else {
+                    Blob blob = FirebaseService.getStorageBucket().get(getStoragePath(docId));
+                    encBytes = blob.getContent();
+                }
+                byte[] dec = RSALogica.descifrarBytesHibrido(encBytes, SecuritySession.getPrivateKey());
                 java.awt.EventQueue.invokeLater(() -> {
                     try {
                         JFileChooser fc = new JFileChooser();
@@ -562,6 +673,22 @@ public class Imagenes extends javax.swing.JInternalFrame {
             try {
                 String docId = model.getValueAt(modelRow, 2).toString();
                 String sp = getStoragePath(docId);
+
+                if (FirebaseService.isCloudFunctionsActive()) {
+                    boolean ok = CloudFunctionsClient.getInstance().deleteImage(docId, sp, userEmail);
+                    AuditService.log(userEmail, "IMAGE_DELETE", "Imagen eliminada: " + nombreImg);
+                    java.awt.EventQueue.invokeLater(() -> {
+                        if (ok) {
+                            ToastNotification.show(this, "Imagen eliminada correctamente.", ToastNotification.Type.SUCCESS);
+                            cargarImagenesDesdeFirebase();
+                            resetForm();
+                        } else {
+                            ToastNotification.show(this, "Error al eliminar la imagen.", ToastNotification.Type.ERROR);
+                        }
+                    });
+                    return;
+                }
+
                 FirebaseService.getStorageBucket().get(sp).delete();
                 String coll = getHashedUserPath();
                 var deleteFuture = FirebaseService.getFirestore().collection(Objects.requireNonNull(coll)).document(Objects.requireNonNull(docId)).delete();
@@ -591,8 +718,17 @@ public class Imagenes extends javax.swing.JInternalFrame {
     }
 
     private String getStoragePath(String docId) throws Exception {
+        if (docStoragePaths.containsKey(docId)) {
+            String p = docStoragePaths.get(docId);
+            if (p != null && !p.isEmpty()) return p;
+        }
+        if (FirebaseService.isCloudFunctionsActive()) {
+            return "";
+        }
         String coll = getHashedUserPath();
-        var docFuture = FirebaseService.getFirestore().collection(Objects.requireNonNull(coll)).document(Objects.requireNonNull(docId)).get();
+        Firestore db = FirebaseService.getFirestore();
+        if (db == null) throw new Exception("Firestore no disponible.");
+        var docFuture = db.collection(Objects.requireNonNull(coll)).document(Objects.requireNonNull(docId)).get();
         String path = docFuture.get().getString("storage_path");
         if (path == null) throw new Exception("Ruta de almacenamiento no encontrada en el documento.");
         return path;
