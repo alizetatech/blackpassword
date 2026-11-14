@@ -30,9 +30,9 @@ El servidor backend y la nube nunca tienen acceso a claves privadas, contraseña
 - **Visor Seguro Integrado:** Previsualización y visualización en memoria sin persistir copias temporales descifradas en disco.
 - **Almacenamiento Dual:** Soporte para bóveda local blindada y sincronización remota cifrada.
 
-### 🔑 3. Blindaje de Memoria & KEK de Hardware
+### 🔑 3. Blindaje de Memoria & Paquete Maestro KEK Portable
 - **Limpieza de Memoria RAM:** Limpieza activa e inmediata de arrays de memoria (`SecureCharArray`) tras su uso para mitigar ataques de volcado de memoria (RAM dumping).
-- **Key Encryption Key (KEK):** Derivación de llaves maestras enlazadas criptográficamente a la huella de hardware del equipo (CPU ID, BIOS, volumen de disco).
+- **Key Encryption Key (KEK) Autónomo (.kek):** Contenedor maestro autónomo (`WKEK v2`) que protege tus llaves asimétricas RSA con PBKDF2 (600,000 iteraciones) y AES-256-GCM, permitiéndote respaldar, transportar y utilizar tu bóveda en cualquier otra computadora con tu contraseña maestra.
 - **Protección PIN & Salting Robusto:** Protección mediante funciones de derivación de claves con PBKDF2/Argon2.
 
 ### 🌐 4. Túneles VPN WireGuard
